@@ -9,10 +9,10 @@ class DataResponse(BaseModel):
 
 
 class DataDebugResponse(BaseModel):
-    result: bool = False  # True/False
-    detect_img: str = None  # base64 result encoded image
-    segment_img: str = None  # base64 result encoded image
-    final_img: str = None  # base64 result encoded image
+    Result: bool = False  # True/False
+    DetectImg: str = None  # base64 result encoded image
+    SegmentImg: str = None  # base64 result encoded image
+    FinalImg: str = None  # base64 result encoded image
 
 
 class ErrorCode:

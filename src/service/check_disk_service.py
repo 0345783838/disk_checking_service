@@ -66,9 +66,8 @@ class DiskCheckingService(BaseService):
             # Put the label text
             cv2.putText(image, label, (top_left[0], top_left[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
-    def check_disk_debug(self, params):
+    def check_disk_debug(self, image, params):
         time_st = time.time()
-        image = cv2.imread(params.image_path)
         draw_image = image.copy()
         boxes, confs, cls_idxs = self.disk_point_detect_model.detect_objects_debug(image, params.detect_threshold,
                                                                                    params.detect_iou)
@@ -199,10 +198,10 @@ class DiskCheckingService(BaseService):
 
         sum_res = res_classification and res_spacing and res_count
 
-        return DataDebugResponse(result=sum_res,
-                                 detect_img=res_detect,
-                                 segment_img=res_mark_crop,
-                                 final_img=res_final)
+        return DataDebugResponse(Result=sum_res,
+                                 DetectImg=res_detect,
+                                 SegmentImg=res_mark_crop,
+                                 FinalImg=res_final)
 
     def check_disk(self, image):
         # return the image

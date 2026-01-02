@@ -78,10 +78,25 @@ def check_disk_swagger(image: UploadFile = File(...)):
 
 
 @inspection_router.post(path='/check_disk_debug')
-def check_disk_debug(params_json: str = Form(...)):
+def check_disk_debug(image: UploadFile = File(...), params_json: str = Form(...)):
+    if not image.file:
+        raise HTTPException(status_code=400, detail="Invalid input")
     if not params_json:
         raise HTTPException(status_code=400, detail="Invalid input")
 
     params = Params(**json.loads(params_json))
-    res = disk_checking_service.check_disk_debug(params)
+    img_str = image.file.read()
+    if img_str is None or img_str == b'':
+        # Cannot read image
+        return HTTPException(status_code=400, detail="Invalid input")
+    try:
+        np_img = np.fromstring(img_str, np.uint8)
+        img = cv2.imdecode(np_img, flags=1)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid input")
+    except Exception as ex:
+        # Cannot decode image
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    res = disk_checking_service.check_disk_debug(img, params)
     return res
