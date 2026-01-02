@@ -1,0 +1,87 @@
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from src.service.check_disk_service import DiskCheckingService
+from typing import List
+import numpy as np
+import json
+import cv2
+import io
+
+# diamond_router = APIRouter(dependencies=[Depends(check_auth)])
+inspection_router = APIRouter()
+disk_checking_service = DiskCheckingService()
+
+
+class Params(BaseModel):
+    image_path: str
+    segment_threshold: float
+
+    detect_threshold: float
+    detect_iou: float
+
+    caliper_min_edge_distance: float
+    caliper_max_edge_distance: float
+    caliper_length_rate: float
+    caliper_thickness_list: List[int]
+
+    disk_num: int
+    disk_max_distance: float
+    disk_min_distance: float
+    disk_min_area: float
+
+
+@inspection_router.post(path='/check_disk')
+def check_disk(image: UploadFile = File(...)):
+    if not image.file:
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    img_str = image.file.read()
+    if img_str is None or img_str == b'':
+        # Cannot read image
+        return HTTPException(status_code=400, detail="Invalid input")
+    try:
+        np_img = np.fromstring(img_str, np.uint8)
+        img = cv2.imdecode(np_img, flags=1)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid input")
+    except Exception as ex:
+        # Cannot decode image
+        raise HTTPException(status_code=400, detail="Invalid input")
+    res = disk_checking_service.check_disk(img)
+    return res
+
+
+@inspection_router.post(path='/check_disk_swagger')
+def check_disk_swagger(image: UploadFile = File(...)):
+    if not image.file:
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    img_str = image.file.read()
+    if img_str is None or img_str == b'':
+        # Cannot read image
+        return HTTPException(status_code=400, detail="Invalid input")
+    try:
+        np_img = np.fromstring(img_str, np.uint8)
+        img = cv2.imdecode(np_img, flags=1)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid input")
+    except Exception as ex:
+        # Cannot decode image
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    draw_image = disk_checking_service.check_disk_swagger(img)
+    _, encoded_image = cv2.imencode('.jpg', draw_image)
+    image_bytes = io.BytesIO(encoded_image.tobytes())
+
+    return StreamingResponse(image_bytes, media_type="image/jpeg")
+
+
+@inspection_router.post(path='/check_disk_debug')
+def check_disk_debug(params_json: str = Form(...)):
+    if not params_json:
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    params = Params(**json.loads(params_json))
+    res = disk_checking_service.check_disk_debug(params)
+    return res

@@ -1,0 +1,13 @@
+opencv-python==4.6.0.66
+uvicorn~=0.38.0
+python-decouple==3.4
+python-multipart==0.0.5
+onnxruntime~=1.23.2
+numpy==1.26.4
+fastapi~=0.124.0
+fastapi-health
+tqdm==4.64.0
+cryptography==40.0.2
+passlib
+pydantic~=2.12.5
+scipy
