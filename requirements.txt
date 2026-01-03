@@ -11,3 +11,4 @@ cryptography==40.0.2
 passlib
 pydantic~=2.12.5
 scipy
+nuitka

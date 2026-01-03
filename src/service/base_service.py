@@ -45,7 +45,7 @@ POINT_CLASSIFY_BATCH_SIZE = config('POINT_CLASSIFY_BATCH_SIZE', cast=int, defaul
 CALIPER_MIN_EDGE_DISTANCE = config('CALIPER_MIN_EDGE_DISTANCE', cast=float)
 CALIPER_SUBPIXEL = config('CALIPER_SUB_PIXEL', cast=bool)
 CALIPER_MAX_PAIRS = config('CALIPER_MAX_PAIRS', cast=int)
-CALIPER_PAIR_MAX_GAP = config('CALIPER_PAIR_MAX_GAP', cast=float)
+CALIPER_MAX_EDGE_DISTANCE = config('CALIPER_MAX_EDGE_DISTANCE', cast=float)
 CALIPER_THICKNESS_LIST = config('CALIPER_THICKNESS_LIST', cast=lambda v: [int(s.strip()) for s in v.split(',')])
 CALIPER_LENGTH_RATE = config('CALIPER_LENGTH_RATE', cast=float)
 CALIPER_POLARITY = config('CALIPER_POLARITY')
@@ -78,7 +78,7 @@ point_classification_model = YoloClassifier(model_path=POINT_CLASSIFY_MODEL_PATH
 caliper = AdvancedMultiEdgeCaliper(min_edge_distance=CALIPER_MIN_EDGE_DISTANCE,
                                    subpixel=CALIPER_SUBPIXEL,
                                    max_pairs=CALIPER_MAX_PAIRS,
-                                   pair_max_gap=CALIPER_PAIR_MAX_GAP,
+                                   pair_max_gap=CALIPER_MAX_EDGE_DISTANCE,
                                    thickness_list=CALIPER_THICKNESS_LIST,
                                    length_rate=CALIPER_LENGTH_RATE,
                                    polarity=CALIPER_POLARITY,

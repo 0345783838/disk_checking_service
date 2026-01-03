@@ -100,3 +100,8 @@ def check_disk_debug(image: UploadFile = File(...), params_json: str = Form(...)
 
     res = disk_checking_service.check_disk_debug(img, params)
     return res
+
+
+@inspection_router.get(path='/check_service_status')
+def check_service_status():
+    return {"status": "running"}
