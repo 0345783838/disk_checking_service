@@ -884,7 +884,7 @@ class DiskCheckingService(BaseService):
     def get_caliper_result(self, img, center):
         res = self.caliper.measure(img, center=center)
         # vis = self.caliper.visualize(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), center=center)
-
+        print(res)
         return res
 
     def clean_mask(self, img, min_disk_area):
@@ -903,7 +903,7 @@ class DiskCheckingService(BaseService):
                                          thickness_list=thickness_list)
 
         # vis = self.caliper.visualize(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), center=center)
-
+        print(res)
         return res
 
     def draw_mask_contour(self, img, mask_seg, center, draw_ratio=0.4, mask_color=(255, 153, 51),
