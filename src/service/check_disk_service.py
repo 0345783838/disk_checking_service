@@ -887,9 +887,10 @@ class DiskCheckingService(BaseService):
         return res
 
     def clean_mask(self, img, min_disk_area):
-        img_close = cv2.morphologyEx(img, cv2.MORPH_CLOSE, np.ones((7, 5)))
-        img = self.remove_mask_noise(img_close, min_disk_area)
-        return img
+        img = self.remove_mask_noise(img, min_disk_area)
+        img_close = cv2.morphologyEx(img, cv2.MORPH_CLOSE, np.ones((11, 11)))
+
+        return img_close
 
     def get_caliper_result_debug(self, img, center, length_rate, min_edge_distance, max_edge_distance, thickness_list):
         # img_open = cv2.morphologyEx(img_close, cv2.MORPH_OPEN, np.ones((1, 3)))
