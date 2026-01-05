@@ -14,7 +14,6 @@ disk_checking_service = DiskCheckingService()
 
 
 class Params(BaseModel):
-    image_path: str
     segment_threshold: float
 
     detect_threshold: float
