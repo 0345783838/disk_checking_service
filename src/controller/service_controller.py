@@ -8,9 +8,13 @@ import json
 import cv2
 import io
 
+from src.service.control_plc_service import PlcControllingService
+
 # diamond_router = APIRouter(dependencies=[Depends(check_auth)])
 inspection_router = APIRouter()
+communication_router = APIRouter()
 disk_checking_service = DiskCheckingService()
+plc_controlling_service = PlcControllingService()
 
 
 class Params(BaseModel):
@@ -104,3 +108,33 @@ def check_disk_debug(image: UploadFile = File(...), params_json: str = Form(...)
 @inspection_router.get(path='/check_service_status')
 def check_service_status():
     return {"status": "running"}
+
+
+@communication_router.get(path='/connect_plc')
+def connect_plc(ip: str, port: int):
+    return plc_controlling_service.connect_plc(ip, port)
+
+
+@communication_router.get(path='/disconnect_plc')
+def disconnect_plc():
+    return plc_controlling_service.disconnect_plc()
+
+
+@communication_router.get(path='/control_uv')
+def control_uv(uv_on: bool):
+    return plc_controlling_service.turn_on_uv() if uv_on else plc_controlling_service.turn_off_uv()
+
+
+@communication_router.get(path='/control_led')
+def control_led(led_on: bool):
+    return plc_controlling_service.turn_on_led() if led_on else plc_controlling_service.turn_off_led()
+
+
+@communication_router.get(path='/check_connection')
+def check_connection():
+    return plc_controlling_service.check_connection()
+
+
+@communication_router.get(path='/on_error')
+def on_error():
+    return plc_controlling_service.plc_controller.on_error()

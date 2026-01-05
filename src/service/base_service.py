@@ -1,4 +1,5 @@
 # Import the Model Achitecture here!!!
+from src.communication.modbus_client import MbClient
 from src.inference.segment.unet_onnx_segmentor_new import OnnxSegmentor as OnnxSegmentorUnet
 from src.inference.yolo_segment.onnx_segmentor import OnnxSegmentor
 from src.inference.yolo_classify.yolo_classifier import YoloClassifier
@@ -90,6 +91,7 @@ max_disk_distance = MAX_DISK_DISTANCE
 min_disk_distance = MIN_DISK_DISTANCE
 min_disk_area = MIN_DISK_AREA
 
+plc_controller = MbClient()
 
 
 class BaseService:
@@ -105,5 +107,7 @@ class BaseService:
             self.max_disk_distance = max_disk_distance
             self.min_disk_distance = min_disk_distance
             self.min_disk_area = min_disk_area
+
+            self.plc_controller = plc_controller
         else:
             pass
