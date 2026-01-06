@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from src.service.check_disk_service import DiskCheckingService
@@ -112,29 +112,29 @@ def check_service_status():
 
 @communication_router.get(path='/connect_plc')
 def connect_plc(ip: str, port: int):
-    return plc_controlling_service.connect_plc(ip, port)
+    return {"Success": plc_controlling_service.connect_plc(ip, port)}
 
 
 @communication_router.get(path='/disconnect_plc')
 def disconnect_plc():
-    return plc_controlling_service.disconnect_plc()
+    return {"Success": plc_controlling_service.disconnect_plc()}
 
 
 @communication_router.get(path='/control_uv')
-def control_uv(uv_on: bool):
-    return plc_controlling_service.turn_on_uv() if uv_on else plc_controlling_service.turn_off_uv()
+def control_uv(status: bool = Query(...)):
+    return {"Success": plc_controlling_service.turn_on_uv() if status else plc_controlling_service.turn_off_uv()}
 
 
 @communication_router.get(path='/control_led')
-def control_led(led_on: bool):
-    return plc_controlling_service.turn_on_led() if led_on else plc_controlling_service.turn_off_led()
+def control_led(status: bool= Query(...)):
+    return {"Success": plc_controlling_service.turn_on_led() if status else plc_controlling_service.turn_off_led()}
 
 
 @communication_router.get(path='/check_connection')
 def check_connection():
-    return plc_controlling_service.check_connection()
+    return {"Success": plc_controlling_service.check_connection()}
 
 
 @communication_router.get(path='/on_error')
 def on_error():
-    return plc_controlling_service.plc_controller.on_error()
+    return {"Success": plc_controlling_service.plc_controller.on_error()}

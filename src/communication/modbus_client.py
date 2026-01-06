@@ -13,7 +13,7 @@ class MbClient:
 
     def connect(self, ip, port):
         try:
-            self.client = ModbusTcpClient(self.HMI_IP, port=self.PORT)
+            self.client = ModbusTcpClient(ip, port=port, timeout=1)
             if self.client.connect():
                 self.HMI_IP = ip
                 self.PORT = port
