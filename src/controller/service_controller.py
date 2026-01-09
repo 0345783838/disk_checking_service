@@ -135,6 +135,11 @@ def check_connection():
     return {"Success": plc_controlling_service.check_connection()}
 
 
+@communication_router.get(path='/read_trigger')
+def read_trigger():
+    return {"Success": plc_controlling_service.read_trigger()}
+
+
 @communication_router.get(path='/on_error')
 def on_error():
     return {"Success": plc_controlling_service.plc_controller.on_error()}

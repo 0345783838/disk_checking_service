@@ -72,6 +72,9 @@ class MbClient:
     def off_error(self):
         return self.__write_bit(1, False)
 
+    def read_trigger(self):
+        return self.__read_bit(10)
+
     def __write_bit(self, addr: int, value: bool = False):
         try:
             if not self.check_connection():
@@ -85,6 +88,20 @@ class MbClient:
 
         except Exception:
             return False
+
+    def __read_bit(self, addr: int):
+        try:
+            if not self.check_connection():
+                return -1
+
+            rr = self.client.read_coils(addr, 1, unit=self.UNIT_ID)
+            if rr.isError():
+                return -1
+
+            return rr.bits[0]
+
+        except Exception:
+            return -1
 
 
 if __name__ == "__main__":

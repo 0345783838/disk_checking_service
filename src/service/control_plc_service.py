@@ -31,3 +31,6 @@ class PlcControllingService(BaseService):
 
     def check_connection(self):
         return self.plc_controller.check_connection()
+
+    def read_trigger(self):
+        return self.plc_controller.read_trigger()
