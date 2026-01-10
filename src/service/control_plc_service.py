@@ -23,14 +23,23 @@ class PlcControllingService(BaseService):
     def turn_off_uv(self):
         return self.plc_controller.off_UV()
 
-    def turn_on_led(self):
-        return self.plc_controller.on_LED()
+    def turn_on_led_1(self):
+        return self.plc_controller.on_LED_1()
 
-    def turn_off_led(self):
-        return self.plc_controller.off_LED()
+    def turn_off_led_1(self):
+        return self.plc_controller.off_LED_1()
+
+    def turn_on_led_2(self):
+        return self.plc_controller.on_LED_2()
+
+    def turn_off_led_2(self):
+        return self.plc_controller.off_LED_2()
 
     def check_connection(self):
         return self.plc_controller.check_connection()
 
     def read_trigger(self):
         return self.plc_controller.read_trigger()
+
+    def reset_trigger(self):
+        return self.plc_controller.reset_trigger()

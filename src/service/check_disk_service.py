@@ -203,20 +203,20 @@ class DiskCheckingService(BaseService):
                                  SegmentImg=res_mark_crop,
                                  FinalImg=res_final)
 
-    def check_disk(self, image):
+    def check_disk_white(self, image):
         # return the image
         time_st = time.time()
         boxes, confs, cls_idxs = self.disk_point_detect_model(image)
         if len(boxes) == 0:
             # Return false
-            return DataResponse(data=False,
-                                error_code=ErrorCode.ERR_NUM_DISK[0],
-                                error_desc=ErrorCode.ERR_NUM_DISK[1])
+            return DataResponse(Result=False,
+                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
+                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
 
         if len(boxes) < self.num_disk * 3:
-            return DataResponse(data=False,
-                                error_code=ErrorCode.ERR_NUM_DISK[0],
-                                error_desc=ErrorCode.ERR_NUM_DISK[1])
+            return DataResponse(Result=False,
+                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
+                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
 
         # Groups the boxes by lines
         boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
@@ -318,15 +318,15 @@ class DiskCheckingService(BaseService):
         sum_res = res_classification and res_spacing and res_count
 
         if sum_res:
-            return DataResponse(result=sum_res,
-                                error_code=ErrorCode.PASS[0],
-                                error_desc=ErrorCode.PASS[1],
-                                res_img=self._convert_2_base64(crop_img))
+            return DataResponse(Result=sum_res,
+                                ErrorCode=ErrorCode.PASS[0],
+                                ErrorDesc=ErrorCode.PASS[1],
+                                ResImg=self._convert_2_base64(crop_img))
 
-        return DataResponse(result=sum_res,
-                            error_code=ErrorCode.ABNORMAL[0],
-                            error_desc=ErrorCode.ABNORMAL[1],
-                            res_img=self._convert_2_base64(crop_img))
+        return DataResponse(Result=sum_res,
+                            ErrorCode=ErrorCode.ABNORMAL[0],
+                            ErrorDesc=ErrorCode.ABNORMAL[1],
+                            ResImg=self._convert_2_base64(crop_img))
 
     def check_disk_swagger(self, image):
         # return the image
@@ -334,9 +334,9 @@ class DiskCheckingService(BaseService):
         boxes, confs, cls_idxs = self.disk_point_detect_model(image)
         if len(boxes) == 0:
             # Return false
-            return DataResponse(data=False)
+            return DataResponse(Result=False)
         if len(boxes) < self.num_disk:
-            return DataResponse(data=False)
+            return DataResponse(Result=False)
 
         # # draw bounding box
         # for box, conf, cls in zip(boxes, confs, cls_idxs):
@@ -932,6 +932,9 @@ class DiskCheckingService(BaseService):
                 cv2.drawContours(img, [contour], -1, 0, -1)
 
         return img
+
+    def check_disk_uv(self, img):
+        pass
 
 
 if __name__ == '__main__':

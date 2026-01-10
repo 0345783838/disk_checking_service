@@ -2,10 +2,10 @@ from pydantic import BaseModel
 
 
 class DataResponse(BaseModel):
-    result: bool = False  # True/False
-    error_code: str = None  # ["PASS", "ERROR_001", "ERROR_002", "ERROR_003",...]
-    error_desc: str = None  # ["Kem thiếc đạt chuẩn", "Kem thiếc in lệch", "Model này chưa được setup",...]
-    res_img: str = None  # base64 result encoded image
+    Result: bool = False  # True/False
+    ErrorCode: str = None  # ["PASS", "ERROR_001", "ERROR_002", "ERROR_003",...]
+    ErrorDesc: str = None  # ["Khay đĩa OK", "Khay đĩa bất thường",...]
+    ResImg: str = None  # base64 result encoded image
 
 
 class DataDebugResponse(BaseModel):

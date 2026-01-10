@@ -34,7 +34,7 @@ class Params(BaseModel):
     disk_min_area: float
 
 
-@inspection_router.post(path='/check_disk')
+@inspection_router.post(path='/check_disk_white')
 def check_disk(image: UploadFile = File(...)):
     if not image.file:
         raise HTTPException(status_code=400, detail="Invalid input")
@@ -51,9 +51,29 @@ def check_disk(image: UploadFile = File(...)):
     except Exception as ex:
         # Cannot decode image
         raise HTTPException(status_code=400, detail="Invalid input")
-    res = disk_checking_service.check_disk(img)
+    res = disk_checking_service.check_disk_white(img)
     return res
 
+
+@inspection_router.post(path='/check_disk_uv')
+def check_disk(image: UploadFile = File(...)):
+    if not image.file:
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    img_str = image.file.read()
+    if img_str is None or img_str == b'':
+        # Cannot read image
+        return HTTPException(status_code=400, detail="Invalid input")
+    try:
+        np_img = np.fromstring(img_str, np.uint8)
+        img = cv2.imdecode(np_img, flags=1)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid input")
+    except Exception as ex:
+        # Cannot decode image
+        raise HTTPException(status_code=400, detail="Invalid input")
+    res = disk_checking_service.check_disk_uv(img)
+    return res
 
 @inspection_router.post(path='/check_disk_swagger')
 def check_disk_swagger(image: UploadFile = File(...)):
@@ -125,9 +145,14 @@ def control_uv(status: bool = Query(...)):
     return {"Success": plc_controlling_service.turn_on_uv() if status else plc_controlling_service.turn_off_uv()}
 
 
-@communication_router.get(path='/control_led')
-def control_led(status: bool= Query(...)):
-    return {"Success": plc_controlling_service.turn_on_led() if status else plc_controlling_service.turn_off_led()}
+@communication_router.get(path='/control_led_1')
+def control_led_1(status: bool= Query(...)):
+    return {"Success": plc_controlling_service.turn_on_led_1() if status else plc_controlling_service.turn_off_led_1()}
+
+
+@communication_router.get(path='/control_led_2')
+def control_led_2(status: bool= Query(...)):
+    return {"Success": plc_controlling_service.turn_on_led_2() if status else plc_controlling_service.turn_off_led_2()}
 
 
 @communication_router.get(path='/check_connection')
@@ -137,7 +162,13 @@ def check_connection():
 
 @communication_router.get(path='/read_trigger')
 def read_trigger():
-    return {"Success": plc_controlling_service.read_trigger()}
+    return {"Success": plc_controlling_service.read_trigger()[0],
+            "Status": plc_controlling_service.read_trigger()[1]}
+
+
+@communication_router.get(path='/reset_trigger')
+def reset_trigger():
+    return {"Success": plc_controlling_service.reset_trigger()}
 
 
 @communication_router.get(path='/on_error')

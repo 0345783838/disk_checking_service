@@ -60,11 +60,17 @@ class MbClient:
     def off_UV(self):
         return self.__write_bit(2, False)
 
-    def on_LED(self):
+    def on_LED_1(self):
         return self.__write_bit(3, True)
 
-    def off_LED(self):
+    def off_LED_1(self):
         return self.__write_bit(3, False)
+
+    def on_LED_2(self):
+        return self.__write_bit(4, True)
+
+    def off_LED_2(self):
+        return self.__write_bit(4, False)
 
     def on_error(self):
         return self.__write_bit(1, True)
@@ -75,10 +81,13 @@ class MbClient:
     def read_trigger(self):
         return self.__read_bit(10)
 
+    def reset_trigger(self):
+        return self.__write_bit(10, False)
+
     def __write_bit(self, addr: int, value: bool = False):
         try:
-            if not self.check_connection():
-                return False
+            # if not self.check_connection():
+            #     return False
 
             rr = self.client.write_coil(addr, value, unit=self.UNIT_ID)
             if rr.isError():
@@ -91,17 +100,17 @@ class MbClient:
 
     def __read_bit(self, addr: int):
         try:
-            if not self.check_connection():
-                return -1
+            # if not self.check_connection():
+            #     return -1
 
             rr = self.client.read_coils(addr, 1, unit=self.UNIT_ID)
             if rr.isError():
-                return -1
+                return -1, False
 
-            return rr.bits[0]
+            return 1, rr.bits[0]
 
         except Exception:
-            return -1
+            return -1, False
 
 
 if __name__ == "__main__":
