@@ -74,8 +74,8 @@ class DiskCheckingService(BaseService):
         if len(boxes) == 0:
             return
 
-        if len(boxes) < self.num_disk * 3:
-            return
+        # if len(boxes) < self.num_disk * 3:
+        #     return
 
         # draw bounding box
         self.draw_detected_boxes(draw_image, boxes, confs, cls_idxs)
@@ -888,9 +888,9 @@ class DiskCheckingService(BaseService):
 
     def clean_mask(self, img, min_disk_area):
         img = self.remove_mask_noise(img, min_disk_area)
-        img_close = cv2.morphologyEx(img, cv2.MORPH_CLOSE, np.ones((11, 11)))
+        # img_close = cv2.morphologyEx(img, cv2.MORPH_CLOSE, np.ones((7, 3)))
 
-        return img_close
+        return img
 
     def get_caliper_result_debug(self, img, center, length_rate, min_edge_distance, max_edge_distance, thickness_list):
         # img_open = cv2.morphologyEx(img_close, cv2.MORPH_OPEN, np.ones((1, 3)))
