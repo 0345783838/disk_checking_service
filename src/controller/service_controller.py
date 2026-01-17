@@ -140,9 +140,14 @@ def disconnect_plc():
     return {"Success": plc_controlling_service.disconnect_plc()}
 
 
-@communication_router.get(path='/control_uv')
+@communication_router.get(path='/control_uv_1')
 def control_uv(status: bool = Query(...)):
-    return {"Success": plc_controlling_service.turn_on_uv() if status else plc_controlling_service.turn_off_uv()}
+    return {"Success": plc_controlling_service.turn_on_uv_1() if status else plc_controlling_service.turn_off_uv_1()}
+
+
+@communication_router.get(path='/control_uv_2')
+def control_uv(status: bool = Query(...)):
+    return {"Success": plc_controlling_service.turn_on_uv_2() if status else plc_controlling_service.turn_off_uv_2()}
 
 
 @communication_router.get(path='/control_led_1')

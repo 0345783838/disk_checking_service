@@ -6,6 +6,8 @@ class DataResponse(BaseModel):
     ErrorCode: str = None  # ["PASS", "ERROR_001", "ERROR_002", "ERROR_003",...]
     ErrorDesc: str = None  # ["Khay đĩa OK", "Khay đĩa bất thường",...]
     ResImg: str = None  # base64 result encoded image
+    MaxDiskDistance: float = None
+    MinDiskDistance: float = None
 
 
 class DataDebugResponse(BaseModel):

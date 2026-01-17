@@ -17,11 +17,17 @@ class PlcControllingService(BaseService):
     def disconnect_plc(self):
         return self.plc_controller.disconnect()
 
-    def turn_on_uv(self):
-        return self.plc_controller.on_UV()
+    def turn_on_uv_1(self):
+        return self.plc_controller.on_UV_1()
 
-    def turn_off_uv(self):
-        return self.plc_controller.off_UV()
+    def turn_off_uv_1(self):
+        return self.plc_controller.off_UV_1()
+
+    def turn_on_uv_2(self):
+        return self.plc_controller.on_UV_2()
+
+    def turn_off_uv_2(self):
+        return self.plc_controller.off_UV_2()
 
     def turn_on_led_1(self):
         return self.plc_controller.on_LED_1()

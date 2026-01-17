@@ -179,13 +179,13 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        res_spacing_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, params.disk_min_distance,
+        res_spacing_1, dis_list_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, params.disk_min_distance,
+        res_spacing_2, dis_list_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, params.disk_min_distance,
+        res_spacing_3, dis_list_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, params.disk_min_distance,
+        res_spacing_4, dis_list_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, params.disk_min_distance,
                                                     params.disk_max_distance)
 
         res_final = self._convert_2_base64(crop_img)
@@ -300,13 +300,13 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        res_spacing_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
+        res_spacing_1, dis_list_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
+        res_spacing_2, dis_list_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
+        res_spacing_3, dis_list_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
+        res_spacing_4, dis_list_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
                                                     self.max_disk_distance)
 
         # Summary result
@@ -316,17 +316,23 @@ class DiskCheckingService(BaseService):
                      and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
 
         sum_res = res_classification and res_spacing and res_count
+        min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+        max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
 
         if sum_res:
             return DataResponse(Result=sum_res,
                                 ErrorCode=ErrorCode.PASS[0],
                                 ErrorDesc=ErrorCode.PASS[1],
-                                ResImg=self._convert_2_base64(crop_img))
+                                ResImg=self._convert_2_base64(crop_img),
+                                MaxDiskDistance=max_disk_distance,
+                                MinDiskDistance=min_disk_distance
+                                )
 
         return DataResponse(Result=sum_res,
                             ErrorCode=ErrorCode.ABNORMAL[0],
                             ErrorDesc=ErrorCode.ABNORMAL[1],
-                            ResImg=self._convert_2_base64(crop_img))
+                            ResImg=self._convert_2_base64(crop_img),
+                            DisksCount=len(caliper_res_1["pairs"]) if len(caliper_res_1["pairs"]) != self.num_disk else len(caliper_res_2["pairs"]),)
 
     def check_disk_swagger(self, image):
         # return the image
@@ -472,6 +478,7 @@ class DiskCheckingService(BaseService):
 
         # 1. compute midpoints
         mids = []
+        distance_list = []
         for pair in caliper_result["pairs"]:
             p1 = np.array(pair["e1"]["point"], dtype=np.float32)
             p2 = np.array(pair["e2"]["point"], dtype=np.float32)
@@ -498,6 +505,7 @@ class DiskCheckingService(BaseService):
             m2 = mids[i + 1]
 
             dist = float(np.linalg.norm(m2 - m1))
+            distance_list.append(dist)
             is_ng = dist < min_dist or dist > max_dist
             color = (0, 0, 255) if is_ng else (0, 255, 0)
 
@@ -539,7 +547,7 @@ class DiskCheckingService(BaseService):
                 -1
             )
 
-        return results
+        return results, distance_list
 
     @staticmethod
     def merge_boxes_1d_x(box_score_list, x_gap=0):

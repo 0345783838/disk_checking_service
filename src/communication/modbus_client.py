@@ -54,23 +54,29 @@ class MbClient:
 
     # ====================================================
 
-    def on_UV(self):
+    def on_UV_1(self):
         return self.__write_bit(2, True)
 
-    def off_UV(self):
+    def off_UV_1(self):
         return self.__write_bit(2, False)
 
-    def on_LED_1(self):
+    def on_UV_2(self):
         return self.__write_bit(3, True)
 
-    def off_LED_1(self):
+    def off_UV_2(self):
         return self.__write_bit(3, False)
 
-    def on_LED_2(self):
+    def on_LED_1(self):
         return self.__write_bit(4, True)
 
-    def off_LED_2(self):
+    def off_LED_1(self):
         return self.__write_bit(4, False)
+
+    def on_LED_2(self):
+        return self.__write_bit(5, True)
+
+    def off_LED_2(self):
+        return self.__write_bit(5, False)
 
     def on_error(self):
         return self.__write_bit(1, True)
