@@ -332,7 +332,8 @@ class DiskCheckingService(BaseService):
                             ErrorCode=ErrorCode.ABNORMAL[0],
                             ErrorDesc=ErrorCode.ABNORMAL[1],
                             ResImg=self._convert_2_base64(crop_img),
-                            DisksCount=len(caliper_res_1["pairs"]) if len(caliper_res_1["pairs"]) != self.num_disk else len(caliper_res_2["pairs"]),)
+                            MaxDiskDistance=max_disk_distance,
+                            MinDiskDistance=min_disk_distance)
 
     def check_disk_swagger(self, image):
         # return the image
