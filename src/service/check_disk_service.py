@@ -1,9 +1,10 @@
 import time
 import cv2
 import numpy as np
-from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse
+from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse, DataResponseUv
 from src.service.base_service import BaseService
 import base64
+import ast
 
 
 class DiskCheckingService(BaseService):
@@ -230,6 +231,10 @@ class DiskCheckingService(BaseService):
         boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
         boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
 
+        # Get the coordinate for the UV image
+        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
+        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
+
         # Get the point boxes by lines
         line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
         line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
@@ -325,7 +330,10 @@ class DiskCheckingService(BaseService):
                                 ErrorDesc=ErrorCode.PASS[1],
                                 ResImg=self._convert_2_base64(crop_img),
                                 MaxDiskDistance=max_disk_distance,
-                                MinDiskDistance=min_disk_distance
+                                MinDiskDistance=min_disk_distance,
+                                CropBox=str(quad_exp.tolist()),
+                                UvBox1=str(uv_box_l1.tolist()),
+                                UvBox2=str(uv_box_l3.tolist())
                                 )
 
         return DataResponse(Result=sum_res,
@@ -333,7 +341,11 @@ class DiskCheckingService(BaseService):
                             ErrorDesc=ErrorCode.ABNORMAL[1],
                             ResImg=self._convert_2_base64(crop_img),
                             MaxDiskDistance=max_disk_distance,
-                            MinDiskDistance=min_disk_distance)
+                            MinDiskDistance=min_disk_distance,
+                            CropBox=str(quad_exp.tolist()),
+                            UvBox1=str(uv_box_l1.tolist()),
+                            UvBox2=str(uv_box_l3.tolist())
+                            )
 
     def check_disk_swagger(self, image):
         # return the image
@@ -549,6 +561,84 @@ class DiskCheckingService(BaseService):
             )
 
         return results, distance_list
+
+    @staticmethod
+    def visualize_edge_spacing_uv(
+            image: np.ndarray,
+            caliper_result: dict,
+            axis: int = 0,
+            line_thickness: int = 2,
+            font_scale: float = 0.45,
+            midpoint_radius: int = 5,
+    ):
+
+        # 1. compute midpoints
+        mids = []
+        for pair in caliper_result["pairs"]:
+            p1 = np.array(pair["e1"]["point"], dtype=np.float32)
+            p2 = np.array(pair["e2"]["point"], dtype=np.float32)
+            mids.append((p1 + p2) / 2.0)
+
+        # 2. sort midpoints
+        mids = sorted(mids, key=lambda m: m[axis])
+
+        results = []
+
+        # 3. draw midpoints (ORANGE)
+        for m in mids:
+            cv2.circle(
+                image,
+                tuple(m.astype(int)),
+                midpoint_radius,
+                (0, 127, 255),  # orange
+                -1
+            )
+
+        # 4. draw spacing + text AT TRUE CENTER
+        for i in range(len(mids) - 1):
+            m1 = mids[i]
+            m2 = mids[i + 1]
+
+            dist = float(np.linalg.norm(m2 - m1))
+            color = (0, 255, 0)
+
+            p1 = tuple(m1.astype(int))
+            p2 = tuple(m2.astype(int))
+
+            # line between edges
+            cv2.line(image, p1, p2, color, line_thickness)
+
+            # TRUE center between two edges
+            mid_text = ((m1 + m2) / 2).astype(int)
+            label = f"{dist:.1f}"
+
+            # center text exactly
+            (tw, th), _ = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
+            )
+
+            cv2.putText(
+                image,
+                label,
+                (mid_text[0] - tw // 2, mid_text[1] - th // 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                color,
+                1,
+                cv2.LINE_AA
+            )
+
+        # 5. re - draw midpoints (ORANGE)
+        for m in mids:
+            cv2.circle(
+                image,
+                tuple(m.astype(int)),
+                1,
+                (0, 127, 255),  # orange
+                -1
+            )
+
+        return image
 
     @staticmethod
     def merge_boxes_1d_x(box_score_list, x_gap=0):
@@ -942,8 +1032,171 @@ class DiskCheckingService(BaseService):
 
         return img
 
-    def check_disk_uv(self, img):
-        pass
+    def check_disk_uv(self, img, crop_box, uv_box_1, uv_box_2):
+        crop_box = np.array(ast.literal_eval(crop_box), dtype=np.float32)
+        uv_box_1 = np.array(ast.literal_eval(uv_box_1), dtype=np.int32)
+        uv_box_2 = np.array(ast.literal_eval(uv_box_2), dtype=np.int32)
+
+        crop_img = self.crop_by_4pts(img, crop_box)
+
+        uv_box_1 = np.array(uv_box_1, dtype=np.int32)
+        uv_box_2 = np.array(uv_box_2, dtype=np.int32)
+
+        uv_crop_1 = crop_img[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]]
+        uv_crop_2 = crop_img[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]]
+
+        uv_thresh_1 = self.preprocess_uv_image(uv_crop_1, threshold=self.uv_disk_threshold)
+        uv_thresh_2 = self.preprocess_uv_image(uv_crop_2, threshold=self.uv_disk_threshold)
+
+        uv_thresh_1 = self.remove_mask_noise(uv_thresh_1, min_disk_area=self.uv_min_disk_area)
+        uv_thresh_2 = self.remove_mask_noise(uv_thresh_2, min_disk_area=self.uv_min_disk_area)
+
+        caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1, center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
+                                                      length_rate=0.95,
+                                                      max_edge_distance=50,
+                                                      min_edge_distance=5,
+                                                      thickness_list=[1, 3])
+
+        caliper_res_2 = self.get_caliper_result_debug(uv_thresh_2, center=(uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
+                                                      length_rate=self.caliper.length_rate,
+                                                      max_edge_distance=self.caliper.pair_max_gap,
+                                                      min_edge_distance=self.caliper.min_edge_distance,
+                                                      thickness_list=self.caliper.thickness_list
+                                                      )
+
+        uv_crop_1 = self.draw_uv_mask(uv_crop_1, uv_thresh_1)
+        uv_crop_2 = self.draw_uv_mask(uv_crop_2, uv_thresh_2)
+
+        result_1 = self.visualize_edge_spacing_uv(uv_crop_1, caliper_res_1)
+        result_2 = self.visualize_edge_spacing_uv(uv_crop_2, caliper_res_2)
+
+        # Draw segment on crop image
+        mask_crop = crop_img.copy()
+        # mask_crop = np.zeros((crop_img.shape[0], crop_img.shape[1], 3), dtype=np.uint8)
+        mask_crop[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]] = result_1
+        mask_crop[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]] = result_2
+
+        count_uv_disk = len(caliper_res_1["pairs"]) + len(caliper_res_2["pairs"])
+
+        if count_uv_disk == 0:
+            return DataResponseUv(Result=True,
+                                  CountUvDisk=0,
+                                  ErrorCode=ErrorCode.PASS[0],
+                                  ErrorDesc=ErrorCode.PASS[1],
+                                  ResImg=self._convert_2_base64(mask_crop))
+
+        return DataResponseUv(Result=False,
+                              CountUvDisk=count_uv_disk,
+                              ErrorCode=ErrorCode.ERR_NUM_UV_DISK[0],
+                              ErrorDesc=ErrorCode.ERR_NUM_UV_DISK[1],
+                              ResImg=self._convert_2_base64(mask_crop))
+
+    @staticmethod
+    def preprocess_uv_image(image, threshold):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blur = cv2.medianBlur(gray, 5)
+        _, thresh = cv2.threshold(blur, threshold, 255, cv2.THRESH_BINARY)
+
+        return thresh
+
+    @staticmethod
+    def crop_by_4pts(image, pts):
+        """
+        image: np.ndarray (H, W, C)
+        pts: array-like shape (4, 2), 4 điểm bất kỳ trên ảnh gốc
+
+        return:
+            cropped_img: ảnh đã crop + align
+            M: perspective transform matrix
+        """
+        pts = np.array(pts, dtype=np.float32)
+
+        # --- 1. Sắp xếp 4 điểm theo thứ tự: tl, tr, br, bl ---
+        def order_points(pts):
+            rect = np.zeros((4, 2), dtype=np.float32)
+
+            s = pts.sum(axis=1)
+            diff = np.diff(pts, axis=1)
+
+            rect[0] = pts[np.argmin(s)]  # top-left
+            rect[2] = pts[np.argmax(s)]  # bottom-right
+            rect[1] = pts[np.argmin(diff)]  # top-right
+            rect[3] = pts[np.argmax(diff)]  # bottom-left
+
+            return rect
+
+        rect = order_points(pts)
+
+        # --- 2. Tính width / height output ---
+        w1 = np.linalg.norm(rect[1] - rect[0])
+        w2 = np.linalg.norm(rect[2] - rect[3])
+        width = int(max(w1, w2))
+
+        h1 = np.linalg.norm(rect[3] - rect[0])
+        h2 = np.linalg.norm(rect[2] - rect[1])
+        height = int(max(h1, h2))
+
+        # --- 3. Điểm đích ---
+        dst = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]
+        ], dtype=np.float32)
+
+        # --- 4. Perspective transform ---
+        M = cv2.getPerspectiveTransform(rect, dst)
+        cropped = cv2.warpPerspective(
+            image, M, (width, height),
+            flags=cv2.INTER_LINEAR
+        )
+
+        return cropped
+
+    def get_uv_box(self, box, w, M, direction, ratio_h=2,):
+        x1, y1, x2, y2 = box
+        height = y2 - y1
+        if direction == "bottom":
+            y1_uv = y2 + 0.5*height
+            y2_uv = y1_uv + height*ratio_h + 0.5*height
+
+            pts_warped = np.array([
+                [0, y1_uv],
+                [w, y1_uv],
+                [w, y2_uv],
+                [0, y2_uv]
+            ], dtype=np.float32)
+
+            # pts_warped = pts_warped.reshape(-1, 1, 2)
+            # M_inv = np.linalg.inv(M)
+            # pts_image = cv2.perspectiveTransform(pts_warped, M_inv)
+            # pts_image = pts_image.reshape(-1, 2)
+
+        else:
+            y1_uv = y1 - height*ratio_h - 0.5*height
+            y2_uv = y1 - 0.5*height
+
+            pts_warped = np.array([
+                [0, y1_uv],
+                [w, y1_uv],
+                [w, y2_uv],
+                [0, y2_uv]
+            ], dtype=np.float32)
+
+            # pts_warped = pts_warped.reshape(-1, 1, 2)
+            # M_inv = np.linalg.inv(M)
+            # pts_image = cv2.perspectiveTransform(pts_warped, M_inv)
+            # pts_image = pts_image.reshape(-1, 2)
+
+        return pts_warped
+
+    def draw_uv_mask(self, uv_crop_1, uv_thresh_1, cnt_color=(0, 0, 255), mask_color=(0, 255, 0)):
+        contours, _ = cv2.findContours(uv_thresh_1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            cv2.drawContours(uv_crop_1, [contour], -1, cnt_color, 1)
+            self.draw_stripes_on_contour_inplace(uv_crop_1, [contour], color=mask_color)
+
+        return uv_crop_1
 
 
 if __name__ == '__main__':

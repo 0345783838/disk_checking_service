@@ -58,6 +58,9 @@ MAX_DISK_DISTANCE = config('MAX_DISK_DISTANCE', cast=float)
 MIN_DISK_DISTANCE = config('MIN_DISK_DISTANCE', cast=float)
 MIN_DISK_AREA = config('MIN_DISK_AREA', cast=float)
 
+UV_DISK_THRESHOLD = config('UV_DISK_THRESHOLD', cast=float)
+UV_MIN_DISK_AREA = config('UV_MIN_DISK_AREA', cast=float)
+
 
 # Initialize the models
 disk_segmentor = OnnxSegmentorUnet(DISK_SEGMENT_MODEL_PATH,
@@ -91,6 +94,9 @@ max_disk_distance = MAX_DISK_DISTANCE
 min_disk_distance = MIN_DISK_DISTANCE
 min_disk_area = MIN_DISK_AREA
 
+uv_disk_threshold = UV_DISK_THRESHOLD
+uv_min_disk_area = UV_MIN_DISK_AREA
+
 plc_controller = MbClient()
 
 
@@ -107,6 +113,9 @@ class BaseService:
             self.max_disk_distance = max_disk_distance
             self.min_disk_distance = min_disk_distance
             self.min_disk_area = min_disk_area
+
+            self.uv_disk_threshold = uv_disk_threshold
+            self.uv_min_disk_area = uv_min_disk_area
 
             self.plc_controller = plc_controller
         else:

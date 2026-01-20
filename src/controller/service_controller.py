@@ -34,6 +34,12 @@ class Params(BaseModel):
     disk_min_area: float
 
 
+class UvBox(BaseModel):
+    crop_box: str
+    uv_box_1: str
+    uv_box_2: str
+
+
 @inspection_router.post(path='/check_disk_white')
 def check_disk(image: UploadFile = File(...)):
     if not image.file:
@@ -56,14 +62,21 @@ def check_disk(image: UploadFile = File(...)):
 
 
 @inspection_router.post(path='/check_disk_uv')
-def check_disk(image: UploadFile = File(...)):
-    if not image.file:
+def check_disk(image: UploadFile = File(...), uv_box: str = Form(...)):
+    if not image.file or not uv_box:
+        raise HTTPException(status_code=400, detail="Invalid input")
+    uv_box_json = UvBox(**json.loads(uv_box))
+    crop_box = uv_box_json.crop_box
+    uv_box_1 = uv_box_json.uv_box_1
+    uv_box_2 = uv_box_json.uv_box_2
+
+    if not uv_box_1 or not uv_box_2:
         raise HTTPException(status_code=400, detail="Invalid input")
 
     img_str = image.file.read()
     if img_str is None or img_str == b'':
         # Cannot read image
-        return HTTPException(status_code=400, detail="Invalid input")
+        raise HTTPException(status_code=400, detail="Invalid input")
     try:
         np_img = np.fromstring(img_str, np.uint8)
         img = cv2.imdecode(np_img, flags=1)
@@ -72,8 +85,9 @@ def check_disk(image: UploadFile = File(...)):
     except Exception as ex:
         # Cannot decode image
         raise HTTPException(status_code=400, detail="Invalid input")
-    res = disk_checking_service.check_disk_uv(img)
+    res = disk_checking_service.check_disk_uv(img, crop_box, uv_box_1, uv_box_2)
     return res
+
 
 @inspection_router.post(path='/check_disk_swagger')
 def check_disk_swagger(image: UploadFile = File(...)):
