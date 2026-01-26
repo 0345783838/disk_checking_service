@@ -29,7 +29,7 @@ class DataDebugResponse(BaseModel):
 
 
 class ErrorCode:
-    PASS = ("PASS", "Kiểm tra OK")
-    ABNORMAL = ("ERROR_001", "Khay đĩa bất thường")
-    ERR_NUM_DISK = ("ERROR_002", "Số lượng đĩa trong khay bất thường")
+    PASS = ("PASS", "Khay đĩa đạt chất lượng")
+    ABNORMAL = ("ERROR_001", "Khay đĩa có bất thường")
+    ERR_NUM_DISK = ("ERROR_002", "Số lượng khe đĩa trong khay bất thường")
     ERR_NUM_UV_DISK = ("ERROR_003", "Có đĩa UV trong khay")

@@ -6,7 +6,7 @@ from src.inference.yolo_classify.yolo_classifier import YoloClassifier
 from src.inference.yolo_detect.onnx_detector import OnnxDetector
 import decouple
 
-from src.tools.caliper_advanced import AdvancedMultiEdgeCaliper
+from src.tools.caliper_advanced_new import AdvancedMultiEdgeCaliper
 
 # Load config here!!!
 config = decouple.config

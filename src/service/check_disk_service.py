@@ -1,3 +1,4 @@
+import math
 import time
 import cv2
 import numpy as np
@@ -300,11 +301,13 @@ class DiskCheckingService(BaseService):
         print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Visualize result:
+        time_st = time.time()
         self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
+        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
         res_spacing_1, dis_list_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
                                                     self.max_disk_distance)
         res_spacing_2, dis_list_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
@@ -323,6 +326,8 @@ class DiskCheckingService(BaseService):
         sum_res = res_classification and res_spacing and res_count
         min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
         max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+
+
 
         if sum_res:
             return DataResponse(Result=sum_res,
@@ -675,44 +680,48 @@ class DiskCheckingService(BaseService):
         return merged
 
     @staticmethod
-    def draw_stripes_on_contour_inplace(image, contour, stripe_spacing=10, color=(0, 255, 0), thickness=1):
-        """
-        Vẽ sọc trực tiếp lên ảnh gốc trong vùng contour.
-
-        Parameters:
-            image (np.ndarray): ảnh gốc (BGR), sẽ bị thay đổi trực tiếp.
-            contour (np.ndarray): contour đơn (ndarray Nx1x2).
-            stripe_spacing (int): khoảng cách giữa các sọc.
-            color (tuple): màu sọc (BGR).
-            thickness (int): độ dày sọc.
-
-        Returns:
-            None
-        """
+    def draw_stripes_on_contour_inplace(
+            image, contour,
+            stripe_spacing=10,
+            color=(0, 255, 0),
+            thickness=1
+    ):
         if len(contour) == 0:
             return
-        h, w = image.shape[:2]
 
-        # Tạo mask từ contour
+        cnt = contour[0]
+
+        x, y, w, h = cv2.boundingRect(cnt)
+
+        if w <= 0 or h <= 0:
+            return
+
+        roi = image[y:y + h, x:x + w]
+
+        # shift contour về local ROI
+        cnt_local = cnt.copy()
+        cnt_local[:, 0, 0] -= x
+        cnt_local[:, 0, 1] -= y
+
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mask, contour, -1, color=255, thickness=-1)
+        cv2.drawContours(mask, [cnt_local], -1, 255, -1)
 
-        # Tạo lớp sọc tạm để vẽ
-        stripe_layer = np.zeros_like(image)
+        stripe_layer = np.zeros_like(roi)
 
-        # Vẽ các đường chéo lên stripe_layer
-        for x in range(-h, w, stripe_spacing):
-            pt1 = (x, h)
-            pt2 = (x + h, 0)
-            cv2.line(stripe_layer, pt1, pt2, color=color, thickness=thickness)
+        for i in range(-h, w, stripe_spacing):
+            cv2.line(
+                stripe_layer,
+                (i, h),
+                (i + h, 0),
+                color,
+                thickness
+            )
 
-        # Dùng mask để giữ lại sọc bên trong contour
-        striped_inside = cv2.bitwise_and(stripe_layer, stripe_layer, mask=mask)
-
-        # Ghi trực tiếp vào image (in-place)
-        image[mask > 0] = (
-                    image[mask > 0].astype(np.float32) * 0.9 + striped_inside[mask > 0].astype(np.float32) * 0.9).clip(
-            0, 255).astype(np.uint8)
+        m = mask > 0
+        roi[m] = (
+                roi[m].astype(np.float32) * 0.9 +
+                stripe_layer[m].astype(np.float32) * 0.9
+        ).clip(0, 255).astype(np.uint8)
 
     @staticmethod
     def draw_boxes(image, boxes, color):
