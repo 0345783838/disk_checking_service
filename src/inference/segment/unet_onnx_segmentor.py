@@ -4,36 +4,54 @@ import cv2
 
 
 class OnnxSegmentor:
-    def __init__(self, onnx_path: str, conf_thres: float = 0.5, gpu_mode=0, num_threads=8):
+    def __init__(
+        self,
+        onnx_path: str,
+        conf_thres: float = 0.5,
+        gpu_mode: int = 0,
+        num_threads: int = 8,
+        num_splits: int = 6,
+        overlap_ratio: float = 0.05,
+    ):
         """
-        ONNX Inference Engine cho bài toán segmentation.
-        - onnx_path: đường dẫn file .onnx
-        - conf_thres: ngưỡng nhị phân hóa mask (0–1)
-        - gpu_mode: 1 = CUDA, 0 = CPU
-        - num_threads: số luồng CPU
+        ONNX Inference Engine cho segmentation ảnh dài
         """
         self.conf_thres = conf_thres
+        self.num_splits = num_splits
+        self.overlap_ratio = overlap_ratio
+
         self._initialize_model(onnx_path, gpu_mode, num_threads)
 
     def __call__(self, image: np.ndarray):
         return self.infer(image)
 
+    # =========================
+    # INIT MODEL
+    # =========================
     def _initialize_model(self, path, gpu_mode=0, num_threads=8):
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
         if gpu_mode:
-            self.session = ort.InferenceSession(path, providers=["CUDAExecutionProvider"])
+            self.session = ort.InferenceSession(
+                path, providers=["CUDAExecutionProvider"]
+            )
         else:
             so.intra_op_num_threads = num_threads
             so.execution_mode = ort.ExecutionMode.ORT_PARALLEL
-            self.session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            self.session = ort.InferenceSession(
+                path,
+                sess_options=so,
+                providers=["CPUExecutionProvider"],
+            )
 
         self._get_input_details()
         self._get_output_details()
 
         # Warmup
-        dummy = np.zeros((1, 3, self.input_height, self.input_width), dtype=np.float32)
+        dummy = np.zeros(
+            (1, 3, self.input_height, self.input_width), dtype=np.float32
+        )
         for _ in range(3):
             _ = self.session.run(self.output_names, {self.input_name: dummy})
 
@@ -48,54 +66,158 @@ class OnnxSegmentor:
         model_outputs = self.session.get_outputs()
         self.output_names = [out.name for out in model_outputs]
 
-    def preprocess(self, image: np.ndarray):
+    # =========================
+    # PREPROCESS
+    # =========================
+    def preprocess_batch(self, images):
         """
-        Chuẩn hóa ảnh đầu vào: resize, chuyển (H,W,C)->(1,C,H,W), scale [0,1].
+        images: list of (H, W, 3)
+        return: (B, 3, H_in, W_in)
         """
-        self.orig_h, self.orig_w = image.shape[:2]
-        image_resized = cv2.resize(image, (self.input_width, self.input_height))
-        image_resized = image_resized.astype(np.float32) / 255.0
-        image_resized = np.transpose(image_resized, (2, 0, 1))  # HWC -> CHW
-        image_resized = np.expand_dims(image_resized, axis=0)   # (1, C, H, W)
-        return image_resized
+        batch = []
+        for img in images:
+            img_r = cv2.resize(img, (self.input_width, self.input_height))
+            img_r = img_r.astype(np.float32) / 255.0
+            img_r = np.transpose(img_r, (2, 0, 1))
+            batch.append(img_r)
+        return np.stack(batch, axis=0)
 
-    def infer(self, image: np.ndarray):
+    # =========================
+    # INFER LARGE IMAGE
+    # =========================
+    def infer_large_image(self, image: np.ndarray):
         """
-        Chạy inference và trả về (mask_resized, score)
+        Input: ảnh lớn (H, W, 3)
+        Output:
+            - full_mask (H, W) uint8
+            - score (float)
         """
-        x = self.preprocess(image)
-        outputs = self.session.run(None, {self.input_name: x})[0]
-        return self.postprocess(outputs)
+        H, W = image.shape[:2]
 
-    def postprocess(self, outputs: np.ndarray):
-        """
-        Hậu xử lý kết quả:
-        - outputs: (1, 1, H, W)
-        - Trả về (mask_resized, score)
-          + mask_resized: uint8 (0/255)
-          + score: float
-              = 1.0 nếu không có vùng lỗi
-              = mean(prob_map[mask_thresh]) nếu có vùng lỗi
-        """
-        # Lấy ra mask logit
-        mask_logits = outputs[0, 0] if outputs.ndim == 4 else outputs[0]
+        step = W // self.num_splits
+        overlap = int(step * self.overlap_ratio)
 
-        # sigmoid
-        prob_map = 1 / (1 + np.exp(-mask_logits))
+        crops = []
+        positions = []
 
-        # tạo mask nhị phân
-        mask_thresh = prob_map > self.conf_thres
+        x = 0
+        while x < W and len(crops) < self.num_splits:
+            x_start = max(0, x - overlap)
+            x_end = min(W, x + step + overlap)
 
-        if mask_thresh.sum() == 0:
-            # Không có lỗi nào được phát hiện
+            crop = image[:, x_start:x_end]
+            crops.append(crop)
+            positions.append((x_start, x_end))
+
+            x += step
+
+        # Preprocess batch
+        batch_input = self.preprocess_batch(crops)
+
+        # Inference
+        outputs = self.session.run(
+            None, {self.input_name: batch_input})[0]  # (B, 1, H_in, W_in)
+
+        # Full probability map
+        full_prob = np.zeros((H, W), dtype=np.float32)
+
+        for i, (x_start, x_end) in enumerate(positions):
+            crop_w = x_end - x_start
+
+            logits = outputs[i, 0]
+            prob = 1.0 / (1.0 + np.exp(-logits))
+
+            prob_resized = cv2.resize(
+                prob,
+                (crop_w, H),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+            full_prob[:, x_start:x_end] = np.maximum(
+                full_prob[:, x_start:x_end],
+                prob_resized,
+            )
+
+        # Threshold sau cùng
+        full_mask = (full_prob > self.conf_thres).astype(np.uint8) * 255
+
+        # Score
+        if full_mask.sum() == 0:
             score = 1.0
         else:
-            # Lấy độ tin cậy trung bình của các vùng được dự đoán là lỗi
-            score = float(prob_map[mask_thresh].mean())
+            score = float(full_prob[full_prob > self.conf_thres].mean())
 
-        # Tạo mask nhị phân (0/255) và resize về kích thước ảnh gốc
-        mask_bin = (mask_thresh.astype(np.uint8)) * 255
-        mask_resized = cv2.resize(mask_bin, (self.orig_w, self.orig_h), interpolation=cv2.INTER_NEAREST)
+        return full_mask, score
 
-        return mask_resized, score
+    def infer_large_image_debug(self, image: np.ndarray, conf_thres):
+        """
+        Input: ?nh l?n (H, W, 3)
+        Output:
+            - full_mask (H, W) uint8
+            - score (float)
+        """
+        H, W = image.shape[:2]
 
+        step = W // self.num_splits
+        overlap = int(step * self.overlap_ratio)
+
+        crops = []
+        positions = []
+
+        x = 0
+        while x < W and len(crops) < self.num_splits:
+            x_start = max(0, x - overlap)
+            x_end = min(W, x + step + overlap)
+
+            crop = image[:, x_start:x_end]
+            crops.append(crop)
+            positions.append((x_start, x_end))
+
+            x += step
+
+        # Preprocess batch
+        batch_input = self.preprocess_batch(crops)
+
+        # Inference
+        outputs = self.session.run(
+            None, {self.input_name: batch_input})[0]  # (B, 1, H_in, W_in)
+
+        # Full probability map
+        full_prob = np.zeros((H, W), dtype=np.float32)
+
+        for i, (x_start, x_end) in enumerate(positions):
+            crop_w = x_end - x_start
+
+            logits = outputs[i, 0]
+            prob = 1.0 / (1.0 + np.exp(-logits))
+
+            prob_resized = cv2.resize(
+                prob,
+                (crop_w, H),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+            full_prob[:, x_start:x_end] = np.maximum(
+                full_prob[:, x_start:x_end],
+                prob_resized,
+            )
+
+        # Threshold sau cùng
+        full_mask = (full_prob > conf_thres).astype(np.uint8) * 255
+
+        # Score
+        if full_mask.sum() == 0:
+            score = 1.0
+        else:
+            score = float(full_prob[full_prob > conf_thres].mean())
+
+        return full_mask, score
+
+    # =========================
+    # PUBLIC API
+    # =========================
+    def infer(self, image: np.ndarray):
+        """
+        Giữ API cũ: truyền ảnh to → trả mask full
+        """
+        return self.infer_large_image(image)

@@ -145,8 +145,8 @@ class DiskCheckingService(BaseService):
         crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor.infer_large_image_debug(crop_seg_1, params.segment_threshold)
-        mask_seg_2, score_seg_2 = self.disk_segmentor.infer_large_image_debug(crop_seg_2, params.segment_threshold)
+        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1, params.segment_threshold)
+        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2, params.segment_threshold)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, params.disk_min_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, params.disk_min_area)
@@ -280,8 +280,11 @@ class DiskCheckingService(BaseService):
         crop_seg_2,_ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor(crop_seg_1)
-        mask_seg_2, score_seg_2 = self.disk_segmentor(crop_seg_2)
+        # mask_seg_1, score_seg_1 = self.disk_segmentor(crop_seg_1)
+        # mask_seg_2, score_seg_2 = self.disk_segmentor(crop_seg_2)
+
+        mask_seg_1, _ = self.disk_segmentor_yolo(crop_seg_1)
+        mask_seg_2, _ = self.disk_segmentor_yolo(crop_seg_2)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
@@ -444,8 +447,8 @@ class DiskCheckingService(BaseService):
         crop_seg_2,_ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor(crop_seg_1)
-        mask_seg_2, score_seg_2 = self.disk_segmentor(crop_seg_2)
+        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo(crop_seg_1)
+        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo(crop_seg_2)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)

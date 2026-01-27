@@ -1,6 +1,6 @@
 # Import the Model Achitecture here!!!
 from src.communication.modbus_client import MbClient
-from src.inference.segment.unet_onnx_segmentor_new import OnnxSegmentor as OnnxSegmentorUnet
+from src.inference.segment.unet_onnx_segmentor import OnnxSegmentor as OnnxSegmentorUnet
 from src.inference.yolo_segment.onnx_segmentor import OnnxSegmentor
 from src.inference.yolo_classify.yolo_classifier import YoloClassifier
 from src.inference.yolo_detect.onnx_detector import OnnxDetector
@@ -89,6 +89,11 @@ caliper = AdvancedMultiEdgeCaliper(min_edge_distance=CALIPER_MIN_EDGE_DISTANCE,
                                    angle_deg=CALIPER_ANGLE,
                                    return_profiles=CALIPER_RETURN_PROFILE)
 
+disk_segmentor_yolo = OnnxSegmentor(path="config/models/best.onnx",
+                                    label=["disk"],
+                                    conf_thres=0.5,
+                                    iou_thres=0.5)
+
 num_disk = NUM_DISK
 max_disk_distance = MAX_DISK_DISTANCE
 min_disk_distance = MIN_DISK_DISTANCE
@@ -118,5 +123,7 @@ class BaseService:
             self.uv_min_disk_area = uv_min_disk_area
 
             self.plc_controller = plc_controller
+
+            self.disk_segmentor_yolo = disk_segmentor_yolo
         else:
             pass

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from src.service.check_disk_service import DiskCheckingService
+from src.service.check_disk_service_yolo import DiskCheckingService
 from typing import List
 import numpy as np
 import json
