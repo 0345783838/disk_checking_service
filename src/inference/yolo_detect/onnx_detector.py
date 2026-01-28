@@ -96,27 +96,28 @@ class OnnxDetector:
         self.get_output_details()
 
     def detect_objects(self, image):
+        img_height, img_width = image.shape[:2]
         input_tensor = self.prepare_input(image)
 
         # Perform inference on the image
         outputs = self.inference(input_tensor)
 
-        self.boxes, self.scores, self.class_ids = self.process_output(outputs)
+        boxes, scores, class_ids = self.process_output(outputs, img_width, img_height)
 
-        return self.boxes, self.scores, self.class_ids
+        return boxes, scores, class_ids
 
     def detect_objects_debug(self, image, conf_threshold, iou_threshold):
+        img_height, img_width = image.shape[:2]
         input_tensor = self.prepare_input(image)
 
         # Perform inference on the image
         outputs = self.inference(input_tensor)
 
-        self.boxes, self.scores, self.class_ids = self.process_output_debug(outputs, conf_threshold, iou_threshold)
+        boxes, scores, class_ids = self.process_output_debug(outputs, img_width, img_height, conf_threshold, iou_threshold)
 
-        return self.boxes, self.scores, self.class_ids
+        return boxes, scores, class_ids
 
     def prepare_input(self, image):
-        self.img_height, self.img_width = image.shape[:2]
 
         input_img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
@@ -137,7 +138,7 @@ class OnnxDetector:
         # print(f"Inference time: {(time.perf_counter() - start)*1000:.2f} ms")
         return outputs
 
-    def process_output(self, output):
+    def process_output(self, output, img_width, img_height):
         predictions = np.squeeze(output[0]).T
 
         # Filter out object confidence scores below threshold
@@ -152,7 +153,7 @@ class OnnxDetector:
         class_ids = np.argmax(predictions[:, 4:], axis=1)
 
         # Get bounding boxes for each object
-        boxes = self.extract_boxes(predictions)
+        boxes = self.extract_boxes(predictions, img_width, img_height)
 
         # Apply non-maxima suppression to suppress weak, overlapping bounding boxes
         # indices = nms(boxes, scores, self.iou_threshold)
@@ -160,7 +161,7 @@ class OnnxDetector:
 
         return boxes[indices], scores[indices], class_ids[indices]
 
-    def process_output_debug(self, output, conf_threshold, iou_threshold):
+    def process_output_debug(self, output, img_width, img_height, conf_threshold, iou_threshold):
         predictions = np.squeeze(output[0]).T
 
         # Filter out object confidence scores below threshold
@@ -175,7 +176,7 @@ class OnnxDetector:
         class_ids = np.argmax(predictions[:, 4:], axis=1)
 
         # Get bounding boxes for each object
-        boxes = self.extract_boxes(predictions)
+        boxes = self.extract_boxes(predictions, img_width, img_height)
 
         # Apply non-maxima suppression to suppress weak, overlapping bounding boxes
         # indices = nms(boxes, scores, self.iou_threshold)
@@ -183,24 +184,24 @@ class OnnxDetector:
 
         return boxes[indices], scores[indices], class_ids[indices]
 
-    def extract_boxes(self, predictions):
+    def extract_boxes(self, predictions, img_width, img_height):
         # Extract boxes from predictions
         boxes = predictions[:, :4]
 
         # Scale boxes to original image dimensions
-        boxes = self.rescale_boxes(boxes)
+        boxes = self.rescale_boxes(boxes, img_width, img_height)
 
         # Convert boxes to xyxy format
         boxes = xywh2xyxy(boxes)
 
         return boxes
 
-    def rescale_boxes(self, boxes):
+    def rescale_boxes(self, boxes, img_width, img_height):
 
         # Rescale boxes to original image dimensions
         input_shape = np.array([self.input_width, self.input_height, self.input_width, self.input_height])
         boxes = np.divide(boxes, input_shape, dtype=np.float32)
-        boxes *= np.array([self.img_width, self.img_height, self.img_width, self.img_height])
+        boxes *= np.array([img_width, img_height, img_width, img_height])
         return boxes
 
     def get_input_details(self):

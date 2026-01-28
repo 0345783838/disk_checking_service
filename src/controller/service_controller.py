@@ -1,3 +1,5 @@
+import time
+
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -34,14 +36,21 @@ class Params(BaseModel):
     disk_min_area: float
 
 
+class ParamsUv(BaseModel):
+    threshold: float
+
+
 class UvBox(BaseModel):
     crop_box: str
     uv_box_1: str
     uv_box_2: str
+    mid_1: str
+    mid_2: str
 
 
 @inspection_router.post(path='/check_disk_white')
 def check_disk(image: UploadFile = File(...)):
+    time_st = time.time()
     if not image.file:
         raise HTTPException(status_code=400, detail="Invalid input")
 
@@ -58,19 +67,23 @@ def check_disk(image: UploadFile = File(...)):
         # Cannot decode image
         raise HTTPException(status_code=400, detail="Invalid input")
     res = disk_checking_service.check_disk_white(img)
+    print("Time white light ms = ", (time.time() - time_st)*1000)
     return res
 
 
 @inspection_router.post(path='/check_disk_uv')
 def check_disk(image: UploadFile = File(...), uv_box: str = Form(...)):
+    time_st = time.time()
     if not image.file or not uv_box:
         raise HTTPException(status_code=400, detail="Invalid input")
     uv_box_json = UvBox(**json.loads(uv_box))
     crop_box = uv_box_json.crop_box
     uv_box_1 = uv_box_json.uv_box_1
     uv_box_2 = uv_box_json.uv_box_2
+    mid_1 = uv_box_json.mid_1
+    mid_2 = uv_box_json.mid_2
 
-    if not uv_box_1 or not uv_box_2:
+    if not uv_box_1 or not uv_box_2 or not mid_1 or not mid_1 or not mid_2:
         raise HTTPException(status_code=400, detail="Invalid input")
 
     img_str = image.file.read()
@@ -85,7 +98,8 @@ def check_disk(image: UploadFile = File(...), uv_box: str = Form(...)):
     except Exception as ex:
         # Cannot decode image
         raise HTTPException(status_code=400, detail="Invalid input")
-    res = disk_checking_service.check_disk_uv(img, crop_box, uv_box_1, uv_box_2)
+    res = disk_checking_service.check_disk_uv(img, crop_box, uv_box_1, uv_box_2, mid_1, mid_2)
+    print("Time uv light ms = ", (time.time() - time_st)*1000)
     return res
 
 
@@ -165,12 +179,12 @@ def control_uv(status: bool = Query(...)):
 
 
 @communication_router.get(path='/control_led_1')
-def control_led_1(status: bool= Query(...)):
+def control_led_1(status: bool = Query(...)):
     return {"Success": plc_controlling_service.turn_on_led_1() if status else plc_controlling_service.turn_off_led_1()}
 
 
 @communication_router.get(path='/control_led_2')
-def control_led_2(status: bool= Query(...)):
+def control_led_2(status: bool = Query(...)):
     return {"Success": plc_controlling_service.turn_on_led_2() if status else plc_controlling_service.turn_off_led_2()}
 
 

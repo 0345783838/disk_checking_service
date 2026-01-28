@@ -181,13 +181,13 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        res_spacing_1, dis_list_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, params.disk_min_distance,
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_2, dis_list_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, params.disk_min_distance,
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_3, dis_list_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, params.disk_min_distance,
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, params.disk_min_distance,
                                                     params.disk_max_distance)
-        res_spacing_4, dis_list_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, params.disk_min_distance,
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, params.disk_min_distance,
                                                     params.disk_max_distance)
 
         res_final = self._convert_2_base64(crop_img)
@@ -310,16 +310,21 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
-        res_spacing_1, dis_list_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
+        print(f"Draw time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        time_st = time.time()
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_2, dis_list_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_3, dis_list_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
                                                     self.max_disk_distance)
-        res_spacing_4, dis_list_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
                                                     self.max_disk_distance)
 
+        print(f"Spacing time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        time_st = time.time()
         # Summary result
         res_classification = len(ng_boxes) == 0
         res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
@@ -330,7 +335,7 @@ class DiskCheckingService(BaseService):
         min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
         max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
 
-
+        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
 
         if sum_res:
             return DataResponse(Result=sum_res,
@@ -341,7 +346,9 @@ class DiskCheckingService(BaseService):
                                 MinDiskDistance=min_disk_distance,
                                 CropBox=str(quad_exp.tolist()),
                                 UvBox1=str(uv_box_l1.tolist()),
-                                UvBox2=str(uv_box_l3.tolist())
+                                UvBox2=str(uv_box_l3.tolist()),
+                                Mid1=str(mids_1),
+                                Mid2=str(mids_3),
                                 )
 
         return DataResponse(Result=sum_res,
@@ -352,7 +359,9 @@ class DiskCheckingService(BaseService):
                             MinDiskDistance=min_disk_distance,
                             CropBox=str(quad_exp.tolist()),
                             UvBox1=str(uv_box_l1.tolist()),
-                            UvBox2=str(uv_box_l3.tolist())
+                            UvBox2=str(uv_box_l3.tolist()),
+                            Mid1=str(mids_1),
+                            Mid2=str(mids_3),
                             )
 
     def check_disk_swagger(self, image):
@@ -568,16 +577,17 @@ class DiskCheckingService(BaseService):
                 -1
             )
 
-        return results, distance_list
+        return results, distance_list, [x.tolist() for x in mids]
 
     @staticmethod
     def visualize_edge_spacing_uv(
             image: np.ndarray,
+            center: tuple,
             caliper_result: dict,
             axis: int = 0,
             line_thickness: int = 2,
-            font_scale: float = 0.45,
-            midpoint_radius: int = 5,
+            midpoint_radius: int = 7,
+
     ):
 
         # 1. compute midpoints
@@ -589,60 +599,15 @@ class DiskCheckingService(BaseService):
 
         # 2. sort midpoints
         mids = sorted(mids, key=lambda m: m[axis])
-
-        results = []
-
-        # 3. draw midpoints (ORANGE)
+        # 3. Draw center line
+        cv2.line(image, (0, center[1]), (image.shape[1], center[1]), (0, 255, 0), line_thickness)
+        # 4. draw midpoints (ORANGE)
         for m in mids:
             cv2.circle(
                 image,
                 tuple(m.astype(int)),
                 midpoint_radius,
-                (0, 127, 255),  # orange
-                -1
-            )
-
-        # 4. draw spacing + text AT TRUE CENTER
-        for i in range(len(mids) - 1):
-            m1 = mids[i]
-            m2 = mids[i + 1]
-
-            dist = float(np.linalg.norm(m2 - m1))
-            color = (0, 255, 0)
-
-            p1 = tuple(m1.astype(int))
-            p2 = tuple(m2.astype(int))
-
-            # line between edges
-            cv2.line(image, p1, p2, color, line_thickness)
-
-            # TRUE center between two edges
-            mid_text = ((m1 + m2) / 2).astype(int)
-            label = f"{dist:.1f}"
-
-            # center text exactly
-            (tw, th), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
-            )
-
-            cv2.putText(
-                image,
-                label,
-                (mid_text[0] - tw // 2, mid_text[1] - th // 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale,
-                color,
-                1,
-                cv2.LINE_AA
-            )
-
-        # 5. re - draw midpoints (ORANGE)
-        for m in mids:
-            cv2.circle(
-                image,
-                tuple(m.astype(int)),
-                1,
-                (0, 127, 255),  # orange
+                (247, 192, 27),  # orange
                 -1
             )
 
@@ -1044,10 +1009,12 @@ class DiskCheckingService(BaseService):
 
         return img
 
-    def check_disk_uv(self, img, crop_box, uv_box_1, uv_box_2):
+    def check_disk_uv(self, img, crop_box, uv_box_1, uv_box_2, mid_1, mid_2):
         crop_box = np.array(ast.literal_eval(crop_box), dtype=np.float32)
         uv_box_1 = np.array(ast.literal_eval(uv_box_1), dtype=np.int32)
         uv_box_2 = np.array(ast.literal_eval(uv_box_2), dtype=np.int32)
+        mid_1 = np.array(ast.literal_eval(mid_1), dtype=np.float32)
+        mid_2 = np.array(ast.literal_eval(mid_2), dtype=np.float32)
 
         crop_img = self.crop_by_4pts(img, crop_box)
 
@@ -1079,8 +1046,8 @@ class DiskCheckingService(BaseService):
         uv_crop_1 = self.draw_uv_mask(uv_crop_1, uv_thresh_1)
         uv_crop_2 = self.draw_uv_mask(uv_crop_2, uv_thresh_2)
 
-        result_1 = self.visualize_edge_spacing_uv(uv_crop_1, caliper_res_1)
-        result_2 = self.visualize_edge_spacing_uv(uv_crop_2, caliper_res_2)
+        result_1 = self.visualize_edge_spacing_uv(uv_crop_1,  (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2), caliper_res_1)
+        result_2 = self.visualize_edge_spacing_uv(uv_crop_2, (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2), caliper_res_2)
 
         # Draw segment on crop image
         mask_crop = crop_img.copy()

@@ -11,6 +11,8 @@ class DataResponse(BaseModel):
     CropBox: str = None  # x1,x2,y1,y2
     UvBox1: str = None  # x1,x2,y1,y2
     UvBox2: str = None  # x1,x2,y1,y2
+    Mid1: str = None
+    Mid2: str = None
 
 
 class DataResponseUv(BaseModel):

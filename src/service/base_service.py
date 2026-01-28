@@ -91,8 +91,8 @@ caliper = AdvancedMultiEdgeCaliper(min_edge_distance=CALIPER_MIN_EDGE_DISTANCE,
 
 disk_segmentor_yolo = OnnxSegmentor(path="config/models/best.onnx",
                                     label=["disk"],
-                                    conf_thres=0.5,
-                                    iou_thres=0.5)
+                                    conf_thres=0.1,
+                                    iou_thres=0.8)
 
 num_disk = NUM_DISK
 max_disk_distance = MAX_DISK_DISTANCE
