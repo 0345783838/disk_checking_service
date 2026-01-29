@@ -611,7 +611,7 @@ class DiskCheckingService(BaseService):
                 -1
             )
 
-        return image
+        return image, mids
 
     @staticmethod
     def merge_boxes_1d_x(box_score_list, x_gap=0):
@@ -1046,8 +1046,12 @@ class DiskCheckingService(BaseService):
         uv_crop_1 = self.draw_uv_mask(uv_crop_1, uv_thresh_1)
         uv_crop_2 = self.draw_uv_mask(uv_crop_2, uv_thresh_2)
 
-        result_1 = self.visualize_edge_spacing_uv(uv_crop_1,  (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2), caliper_res_1)
-        result_2 = self.visualize_edge_spacing_uv(uv_crop_2, (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2), caliper_res_2)
+        result_1, mid_uv_1 = self.visualize_edge_spacing_uv(uv_crop_1,  (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2), caliper_res_1)
+        result_2, mid_uv_2 = self.visualize_edge_spacing_uv(uv_crop_2, (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2), caliper_res_2)
+
+        self.draw_uv_index(uv_crop_1, mid_uv_1, mid_1)
+        self.draw_uv_index(uv_crop_2, mid_uv_2, mid_2)
+
 
         # Draw segment on crop image
         mask_crop = crop_img.copy()
@@ -1176,6 +1180,27 @@ class DiskCheckingService(BaseService):
             self.draw_stripes_on_contour_inplace(uv_crop_1, [contour], color=mask_color)
 
         return uv_crop_1
+
+    def draw_uv_index(self, uv_crop_1, mid_uv_1, mid_1):
+        if len(mid_uv_1) < 1 or len(mid_1) < 1:
+            return
+
+        query = np.array(mid_uv_1)
+        x_pts = mid_1[:, 0]  # (N,)
+        x_q = query[:, 0]  # (M,)
+
+        # Tính |x_q - x_pts| cho toàn bộ cặp (broadcast)
+        dx = np.abs(x_q[:, None] - x_pts[None, :])  # (M,N)
+
+        # Lấy index pts gần nhất cho từng query
+        idxs = np.argmin(dx, axis=1)   # (M,)
+
+        # vẽ số index lên điểm các điểm trong mid_1
+        for i, pt in enumerate(mid_uv_1):
+            cv2.putText(uv_crop_1, f"disk_{idxs[i]+1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+    def check_disk_uv_debug(self, img, params):
+        pass
 
 
 if __name__ == '__main__':

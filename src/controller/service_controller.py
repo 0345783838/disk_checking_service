@@ -36,6 +36,11 @@ class Params(BaseModel):
     disk_min_area: float
 
 
+class UvParams(BaseModel):
+    uv_disk_threshold: int
+    uv_disk_min_area: float
+
+
 class ParamsUv(BaseModel):
     threshold: float
 
@@ -151,6 +156,32 @@ def check_disk_debug(image: UploadFile = File(...), params_json: str = Form(...)
 
     res = disk_checking_service.check_disk_debug(img, params)
     return res
+
+
+@inspection_router.post(path='/check_disk_uv_debug')
+def check_disk_uv_debug(image: UploadFile = File(...), params_json: str = Form(...)):
+    if not image.file:
+        raise HTTPException(status_code=400, detail="Invalid input")
+    if not params_json:
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    params = UvParams(**json.loads(params_json))
+    img_str = image.file.read()
+    if img_str is None or img_str == b'':
+        # Cannot read image
+        return HTTPException(status_code=400, detail="Invalid input")
+    try:
+        np_img = np.fromstring(img_str, np.uint8)
+        img = cv2.imdecode(np_img, flags=1)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid input")
+    except Exception as ex:
+        # Cannot decode image
+        raise HTTPException(status_code=400, detail="Invalid input")
+
+    res = disk_checking_service.check_disk_uv_debug(img, params)
+    return res
+
 
 
 @inspection_router.get(path='/check_service_status')
