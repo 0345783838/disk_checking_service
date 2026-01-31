@@ -2,7 +2,7 @@ import math
 import time
 import cv2
 import numpy as np
-from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse, DataResponseUv
+from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse, DataResponseUv, DataDebugUVResponse
 from src.service.base_service import BaseService
 import base64
 import ast
@@ -59,7 +59,7 @@ class DiskCheckingService(BaseService):
             # Calculate the position for the label
             label_size, base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             top_left = (
-            xmin, ymin - label_size[1] - 10 if ymin - label_size[1] - 10 > 10 else ymin + label_size[1] + 10)
+                xmin, ymin - label_size[1] - 10 if ymin - label_size[1] - 10 > 10 else ymin + label_size[1] + 10)
 
             # Draw the label background
             cv2.rectangle(image, (top_left[0] - 1, top_left[1] + base_line + 10),
@@ -90,12 +90,14 @@ class DiskCheckingService(BaseService):
         crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
                                                                    expand_ratio_y=0.1)
 
-
-
         # Update all boxes coordinates to warped image
         boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
         boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
         boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+
+        # Get the coordinate for the UV image
+        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
+        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
 
         # Get the point boxes by lines
         line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
@@ -141,12 +143,14 @@ class DiskCheckingService(BaseService):
         # Crop the segmentation area
         time_st = time.time()
         crop_seg_1, box_seg_1 = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                    direction='bottom')
+                                                               direction='bottom')
         crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1, params.segment_threshold)
-        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2, params.segment_threshold)
+        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1,
+                                                                                     params.segment_threshold)
+        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2,
+                                                                                     params.segment_threshold)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, params.disk_min_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, params.disk_min_area)
@@ -165,13 +169,17 @@ class DiskCheckingService(BaseService):
         center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
         center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
         center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
-        caliper_res_1 = self.get_caliper_result_debug(mask_seg_1, center_1, params.caliper_length_rate, params.caliper_min_edge_distance,
+        caliper_res_1 = self.get_caliper_result_debug(mask_seg_1, center_1, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
                                                       params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_2 = self.get_caliper_result_debug(mask_seg_1, center_2, params.caliper_length_rate, params.caliper_min_edge_distance,
+        caliper_res_2 = self.get_caliper_result_debug(mask_seg_1, center_2, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
                                                       params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_3 = self.get_caliper_result_debug(mask_seg_2, center_3, params.caliper_length_rate, params.caliper_min_edge_distance,
+        caliper_res_3 = self.get_caliper_result_debug(mask_seg_2, center_3, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
                                                       params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_4 = self.get_caliper_result_debug(mask_seg_2, center_4, params.caliper_length_rate, params.caliper_min_edge_distance,
+        caliper_res_4 = self.get_caliper_result_debug(mask_seg_2, center_4, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
                                                       params.caliper_max_edge_distance, params.caliper_thickness_list)
         print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
 
@@ -181,14 +189,18 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, params.disk_min_distance,
-                                                    params.disk_max_distance)
-        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, params.disk_min_distance,
-                                                    params.disk_max_distance)
-        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, params.disk_min_distance,
-                                                    params.disk_max_distance)
-        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, params.disk_min_distance,
-                                                    params.disk_max_distance)
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
 
         res_final = self._convert_2_base64(crop_img)
 
@@ -203,7 +215,13 @@ class DiskCheckingService(BaseService):
         return DataDebugResponse(Result=sum_res,
                                  DetectImg=res_detect,
                                  SegmentImg=res_mark_crop,
-                                 FinalImg=res_final)
+                                 FinalImg=res_final,
+                                 CropBox=str(quad_exp.tolist()),
+                                 UvBox1=str(uv_box_l1.tolist()),
+                                 UvBox2=str(uv_box_l3.tolist()),
+                                 Mid1=str(mids_1),
+                                 Mid2=str(mids_3),
+                                 )
 
     def check_disk_white(self, image):
         # return the image
@@ -276,8 +294,9 @@ class DiskCheckingService(BaseService):
 
         # Crop the segmentation area
         time_st = time.time()
-        crop_seg_1,_ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35, direction='bottom')
-        crop_seg_2,_ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
+                                                       direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
         # mask_seg_1, score_seg_1 = self.disk_segmentor(crop_seg_1)
@@ -313,14 +332,18 @@ class DiskCheckingService(BaseService):
         print(f"Draw time: {(time.time() - time_st) * 1000:.2f} ms")
 
         time_st = time.time()
-        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
-                                                    self.max_disk_distance)
-        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
-                                                    self.max_disk_distance)
-        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
-                                                    self.max_disk_distance)
-        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
-                                                    self.max_disk_distance)
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
 
         print(f"Spacing time: {(time.time() - time_st) * 1000:.2f} ms")
 
@@ -452,8 +475,9 @@ class DiskCheckingService(BaseService):
 
         # Crop the segmentation area
         time_st = time.time()
-        crop_seg_1,_ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35, direction='bottom')
-        crop_seg_2,_ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
+                                                       direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
 
         # Segment the disks using unet crop
         mask_seg_1, score_seg_1 = self.disk_segmentor_yolo(crop_seg_1)
@@ -484,13 +508,13 @@ class DiskCheckingService(BaseService):
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
 
         self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
-                                                    self.max_disk_distance)
+                                    self.max_disk_distance)
         self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
-                                                    self.max_disk_distance)
+                                    self.max_disk_distance)
         self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
-                                                    self.max_disk_distance)
+                                    self.max_disk_distance)
         self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
-                                                    self.max_disk_distance)
+                                    self.max_disk_distance)
 
         return crop_img
 
@@ -1030,13 +1054,15 @@ class DiskCheckingService(BaseService):
         uv_thresh_1 = self.remove_mask_noise(uv_thresh_1, min_disk_area=self.uv_min_disk_area)
         uv_thresh_2 = self.remove_mask_noise(uv_thresh_2, min_disk_area=self.uv_min_disk_area)
 
-        caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1, center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
+        caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1,
+                                                      center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
                                                       length_rate=0.95,
                                                       max_edge_distance=50,
                                                       min_edge_distance=5,
                                                       thickness_list=[1, 3])
 
-        caliper_res_2 = self.get_caliper_result_debug(uv_thresh_2, center=(uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
+        caliper_res_2 = self.get_caliper_result_debug(uv_thresh_2,
+                                                      center=(uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
                                                       length_rate=self.caliper.length_rate,
                                                       max_edge_distance=self.caliper.pair_max_gap,
                                                       min_edge_distance=self.caliper.min_edge_distance,
@@ -1046,12 +1072,15 @@ class DiskCheckingService(BaseService):
         uv_crop_1 = self.draw_uv_mask(uv_crop_1, uv_thresh_1)
         uv_crop_2 = self.draw_uv_mask(uv_crop_2, uv_thresh_2)
 
-        result_1, mid_uv_1 = self.visualize_edge_spacing_uv(uv_crop_1,  (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2), caliper_res_1)
-        result_2, mid_uv_2 = self.visualize_edge_spacing_uv(uv_crop_2, (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2), caliper_res_2)
+        result_1, mid_uv_1 = self.visualize_edge_spacing_uv(uv_crop_1,
+                                                            (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
+                                                            caliper_res_1)
+        result_2, mid_uv_2 = self.visualize_edge_spacing_uv(uv_crop_2,
+                                                            (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
+                                                            caliper_res_2)
 
         self.draw_uv_index(uv_crop_1, mid_uv_1, mid_1)
         self.draw_uv_index(uv_crop_2, mid_uv_2, mid_2)
-
 
         # Draw segment on crop image
         mask_crop = crop_img.copy()
@@ -1136,12 +1165,12 @@ class DiskCheckingService(BaseService):
 
         return cropped
 
-    def get_uv_box(self, box, w, M, direction, ratio_h=2,):
+    def get_uv_box(self, box, w, M, direction, ratio_h=2, ):
         x1, y1, x2, y2 = box
         height = y2 - y1
         if direction == "bottom":
-            y1_uv = y2 + 0.5*height
-            y2_uv = y1_uv + height*ratio_h + 0.5*height
+            y1_uv = y2 + 0.5 * height
+            y2_uv = y1_uv + height * ratio_h + 0.5 * height
 
             pts_warped = np.array([
                 [0, y1_uv],
@@ -1156,8 +1185,8 @@ class DiskCheckingService(BaseService):
             # pts_image = pts_image.reshape(-1, 2)
 
         else:
-            y1_uv = y1 - height*ratio_h - 0.5*height
-            y2_uv = y1 - 0.5*height
+            y1_uv = y1 - height * ratio_h - 0.5 * height
+            y2_uv = y1 - 0.5 * height
 
             pts_warped = np.array([
                 [0, y1_uv],
@@ -1193,14 +1222,86 @@ class DiskCheckingService(BaseService):
         dx = np.abs(x_q[:, None] - x_pts[None, :])  # (M,N)
 
         # Lấy index pts gần nhất cho từng query
-        idxs = np.argmin(dx, axis=1)   # (M,)
+        idxs = np.argmin(dx, axis=1)  # (M,)
 
         # vẽ số index lên điểm các điểm trong mid_1
         for i, pt in enumerate(mid_uv_1):
-            cv2.putText(uv_crop_1, f"disk_{idxs[i]+1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            cv2.putText(uv_crop_1, f"disk_{idxs[i] + 1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (0, 255, 255), 2)
 
     def check_disk_uv_debug(self, img, params):
-        pass
+        uv_disk_threshold = params.uv_disk_threshold
+        uv_min_disk_area = params.uv_disk_min_area
+        crop_box = np.array(ast.literal_eval(params.crop_box), dtype=np.float32)
+        uv_box_1 = np.array(ast.literal_eval(params.uv_box_1), dtype=np.int32)
+        uv_box_2 = np.array(ast.literal_eval(params.uv_box_2), dtype=np.int32)
+        mid_1 = np.array(ast.literal_eval(params.mid_1), dtype=np.float32)
+        mid_2 = np.array(ast.literal_eval(params.mid_2), dtype=np.float32)
+
+        crop_img = self.crop_by_4pts(img, crop_box)
+
+        uv_box_1 = np.array(uv_box_1, dtype=np.int32)
+        uv_box_2 = np.array(uv_box_2, dtype=np.int32)
+
+        uv_crop_1 = crop_img[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]]
+        uv_crop_2 = crop_img[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]]
+
+        uv_thresh_1 = self.preprocess_uv_image(uv_crop_1, threshold=uv_disk_threshold)
+        uv_thresh_2 = self.preprocess_uv_image(uv_crop_2, threshold=uv_disk_threshold)
+
+        uv_thresh_1 = self.remove_mask_noise(uv_thresh_1, min_disk_area=uv_min_disk_area)
+        uv_thresh_2 = self.remove_mask_noise(uv_thresh_2, min_disk_area=uv_min_disk_area)
+
+        caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1,
+                                                      center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
+                                                      length_rate=0.95,
+                                                      max_edge_distance=50,
+                                                      min_edge_distance=5,
+                                                      thickness_list=[1, 3])
+
+        caliper_res_2 = self.get_caliper_result_debug(uv_thresh_2,
+                                                      center=(uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
+                                                      length_rate=self.caliper.length_rate,
+                                                      max_edge_distance=self.caliper.pair_max_gap,
+                                                      min_edge_distance=self.caliper.min_edge_distance,
+                                                      thickness_list=self.caliper.thickness_list
+                                                      )
+
+        uv_crop_1 = self.draw_uv_mask(uv_crop_1, uv_thresh_1)
+        uv_crop_2 = self.draw_uv_mask(uv_crop_2, uv_thresh_2)
+
+        result_1, mid_uv_1 = self.visualize_edge_spacing_uv(uv_crop_1,
+                                                            (uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
+                                                            caliper_res_1)
+        result_2, mid_uv_2 = self.visualize_edge_spacing_uv(uv_crop_2,
+                                                            (uv_crop_2.shape[1] // 2, uv_crop_2.shape[0] // 2),
+                                                            caliper_res_2)
+
+        self.draw_uv_index(uv_crop_1, mid_uv_1, mid_1)
+        self.draw_uv_index(uv_crop_2, mid_uv_2, mid_2)
+
+        # Draw segment on crop image
+        mask_crop = crop_img.copy()
+        big_thresh = np.zeros((crop_img.shape[0], crop_img.shape[1]), dtype=np.uint8)
+        # mask_crop = np.zeros((crop_img.shape[0], crop_img.shape[1], 3), dtype=np.uint8)
+        mask_crop[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]] = result_1
+        mask_crop[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]] = result_2
+
+        big_thresh[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]] = uv_thresh_1
+        big_thresh[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]] = uv_thresh_2
+
+        count_uv_disk = len(caliper_res_1["pairs"]) + len(caliper_res_2["pairs"])
+
+        if count_uv_disk == 0:
+            return DataDebugUVResponse(Result=True,
+                                       CountUvDisk=count_uv_disk,
+                                       ThresholdImg=self._convert_2_base64(big_thresh),
+                                       FinalImg=self._convert_2_base64(mask_crop))
+
+        return DataDebugUVResponse(Result=False,
+                                   CountUvDisk=count_uv_disk,
+                                   ThresholdImg=self._convert_2_base64(big_thresh),
+                                   FinalImg=self._convert_2_base64(mask_crop))
 
 
 if __name__ == '__main__':

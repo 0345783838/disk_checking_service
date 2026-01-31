@@ -28,6 +28,18 @@ class DataDebugResponse(BaseModel):
     DetectImg: str = None  # base64 result encoded image
     SegmentImg: str = None  # base64 result encoded image
     FinalImg: str = None  # base64 result encoded image
+    CropBox: str = None  # x1,x2,y1,y2
+    UvBox1: str = None  # x1,x2,y1,y2
+    UvBox2: str = None  # x1,x2,y1,y2
+    Mid1: str = None
+    Mid2: str = None
+
+
+class DataDebugUVResponse(BaseModel):
+    Result: bool = False  # True/False
+    CountUvDisk: int = None
+    ThresholdImg: str = None  # base64 result encoded image
+    FinalImg: str = None  # base64 result encoded image
 
 
 class ErrorCode:

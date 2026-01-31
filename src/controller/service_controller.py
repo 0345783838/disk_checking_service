@@ -40,9 +40,11 @@ class UvParams(BaseModel):
     uv_disk_threshold: int
     uv_disk_min_area: float
 
-
-class ParamsUv(BaseModel):
-    threshold: float
+    crop_box: str
+    uv_box_1: str
+    uv_box_2: str
+    mid_1: str
+    mid_2: str
 
 
 class UvBox(BaseModel):
