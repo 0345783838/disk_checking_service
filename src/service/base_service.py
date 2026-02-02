@@ -25,7 +25,10 @@ if hasattr(config, 'config'):
 
 # Segmentation model
 DISK_SEGMENT_MODEL_PATH = config('DISK_SEGMENT_MODEL_PATH')
+DISK_SEGMENT_MODEL_LABELS = config('DISK_SEGMENT_MODEL_LABELS',
+                                        cast=lambda v: [s.strip() for s in v.split(',')])
 DISK_SEGMENT_CONF_THRESH = config('DISK_SEGMENT_CONF_THRESH', cast=float)
+DISK_SEGMENT_IOU_THRESH = config('DISK_SEGMENT_IOU_THRESH', cast=float)
 DISK_SEGMENT_USING_GPU = config('DISK_SEGMENT_USING_GPU', cast=int)
 DISK_SEGMENT_NUM_THREADS = config('DISK_SEGMENT_NUM_THREADS', cast=int)
 
@@ -63,10 +66,10 @@ UV_MIN_DISK_AREA = config('UV_MIN_DISK_AREA', cast=float)
 
 
 # Initialize the models
-disk_segmentor = OnnxSegmentorUnet(DISK_SEGMENT_MODEL_PATH,
-                                   DISK_SEGMENT_CONF_THRESH,
-                                   gpu_mode=DISK_SEGMENT_USING_GPU,
-                                   num_threads=DISK_SEGMENT_NUM_THREADS)
+# disk_segmentor = OnnxSegmentorUnet(DISK_SEGMENT_MODEL_PATH,
+#                                    DISK_SEGMENT_CONF_THRESH,
+#                                    gpu_mode=DISK_SEGMENT_USING_GPU,
+#                                    num_threads=DISK_SEGMENT_NUM_THREADS)
 
 disk_point_detect_model = OnnxDetector(path=DISK_POINT_DETECT_MODEL_PATH,
                                        label=DISK_POINT_DETECT_MODEL_LABELS,
@@ -89,10 +92,10 @@ caliper = AdvancedMultiEdgeCaliper(min_edge_distance=CALIPER_MIN_EDGE_DISTANCE,
                                    angle_deg=CALIPER_ANGLE,
                                    return_profiles=CALIPER_RETURN_PROFILE)
 
-disk_segmentor_yolo = OnnxSegmentor(path="config/models/best.onnx",
-                                    label=["disk"],
-                                    conf_thres=0.1,
-                                    iou_thres=0.8)
+disk_segmentor_yolo = OnnxSegmentor(path=DISK_SEGMENT_MODEL_PATH,
+                                    label=DISK_SEGMENT_MODEL_LABELS,
+                                    conf_thres=DISK_SEGMENT_CONF_THRESH,
+                                    iou_thres=DISK_SEGMENT_IOU_THRESH,)
 
 num_disk = NUM_DISK
 max_disk_distance = MAX_DISK_DISTANCE
@@ -109,7 +112,7 @@ class BaseService:
     def __init__(self):
         if not hasattr(self, '_initialized'):
             self._initialized = True
-            self.disk_segmentor = disk_segmentor
+            # self.disk_segmentor = disk_segmentor
             self.disk_point_detect_model = disk_point_detect_model
             self.point_classification_model = point_classification_model
             self.caliper = caliper

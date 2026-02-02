@@ -21,6 +21,7 @@ plc_controlling_service = PlcControllingService()
 
 class Params(BaseModel):
     segment_threshold: float
+    segment_iou: float
 
     detect_threshold: float
     detect_iou: float
@@ -183,7 +184,6 @@ def check_disk_uv_debug(image: UploadFile = File(...), params_json: str = Form(.
 
     res = disk_checking_service.check_disk_uv_debug(img, params)
     return res
-
 
 
 @inspection_router.get(path='/check_service_status')

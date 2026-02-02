@@ -131,7 +131,7 @@ class OnnxSegmentor:
 
         return boxes[indices], scores[indices], class_ids[indices], mask_preds[indices]
 
-    def process_box_output_debug(self, box_output, img_h, img_w, conf_threshold):
+    def process_box_output_debug(self, box_output, img_h, img_w, conf_threshold, iou_threshold):
         preds = np.squeeze(box_output).T
         num_classes = box_output.shape[1] - self.num_masks - 4
 
@@ -157,7 +157,7 @@ class OnnxSegmentor:
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, img_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, img_h)
 
-        indices = nms(boxes, scores, self.iou_threshold)
+        indices = nms(boxes, scores, iou_threshold)
 
         return boxes[indices], scores[indices], class_ids[indices], mask_preds[indices]
 
@@ -208,12 +208,12 @@ class OnnxSegmentor:
 
         return boxes, scores, class_ids, masks
 
-    def segment_objects_debug(self, image, conf_threshold):
+    def segment_objects_debug(self, image, conf_threshold, iou_threshold):
         input_tensor, img_h, img_w = self.prepare_input(image)
         outputs = self.inference(input_tensor)
 
         boxes, scores, class_ids, mask_preds = self.process_box_output_debug(
-            outputs[0], img_h, img_w, conf_threshold
+            outputs[0], img_h, img_w, conf_threshold, iou_threshold
         )
 
         masks = self.process_mask_output(
@@ -266,13 +266,13 @@ class OnnxSegmentor:
 
         return full_image_mask, None
 
-    def segment_large_image_debug(self, image, conf_threshold):
+    def segment_large_image_debug(self, image, conf_threshold, iou_threshold):
         H, W = image.shape[:2]
         crops, positions = self.split_image(image)
         full_image_mask = np.zeros((H, W), dtype=np.uint8)
 
         for crop, (x1, x2) in zip(crops, positions):
-            _, _, _, masks = self.segment_objects_debug(crop, conf_threshold)
+            _, _, _, masks = self.segment_objects_debug(crop, conf_threshold, iou_threshold)
             if len(masks) == 0:
                 continue
 

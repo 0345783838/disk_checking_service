@@ -148,9 +148,11 @@ class DiskCheckingService(BaseService):
 
         # Segment the disks using unet crop
         mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1,
-                                                                                     params.segment_threshold)
+                                                                                     params.segment_threshold,
+                                                                                     params.segment_iou)
         mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2,
-                                                                                     params.segment_threshold)
+                                                                                     params.segment_threshold,
+                                                                                     params.segment_iou)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, params.disk_min_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, params.disk_min_area)
