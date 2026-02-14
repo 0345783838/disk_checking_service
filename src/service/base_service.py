@@ -14,7 +14,7 @@ Csv = decouple.Csv
 
 if hasattr(config, 'config'):
     decouple.config = decouple.Config(
-        decouple.RepositoryEnv(r'D:\huynhvc\OTHERS\disk_checking\disk_checking\SERVICE\config\config_test.env'))
+        decouple.RepositoryEnv(r'D:\huynhvc\OTHERS\disk_checking\disk_checking\APP\SERVICE\config\config_test.env'))
     config = decouple.config
     Csv = decouple.Csv
 
