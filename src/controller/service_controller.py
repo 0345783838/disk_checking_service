@@ -57,7 +57,7 @@ class UvBox(BaseModel):
 
 
 @inspection_router.post(path='/check_disk_white')
-def check_disk(image: UploadFile = File(...)):
+def check_disk_white(image: UploadFile = File(...)):
     time_st = time.time()
     if not image.file:
         raise HTTPException(status_code=400, detail="Invalid input")
@@ -80,7 +80,7 @@ def check_disk(image: UploadFile = File(...)):
 
 
 @inspection_router.post(path='/check_disk_uv')
-def check_disk(image: UploadFile = File(...), uv_box: str = Form(...)):
+def check_disk_uv(image: UploadFile = File(...), uv_box: str = Form(...)):
     time_st = time.time()
     if not image.file or not uv_box:
         raise HTTPException(status_code=400, detail="Invalid input")

@@ -225,6 +225,30 @@ class DiskCheckingService(BaseService):
                                  Mid2=str(mids_3),
                                  )
 
+    @staticmethod
+    def get_center_row(boxes, image_height):
+        # Tính tâm Y của tất cả các boxes
+        cy = (boxes[:, 1] + boxes[:, 3]) / 2
+
+        # 1. Tìm box gần tâm ảnh nhất làm hệ quy chiếu (anchor)
+        center_y_image = image_height / 2
+        anchor_idx = np.argmin(np.abs(cy - center_y_image))
+        anchor_cy = cy[anchor_idx]
+
+        # 2. Tính chiều cao trung bình của các box để làm ngưỡng (threshold)
+        # (Các box cùng một hàng sẽ có tâm Y lệch nhau không quá nửa chiều cao)
+        avg_h = np.mean(boxes[:, 3] - boxes[:, 1])
+        threshold = avg_h * 0.5
+
+        # 3. Lọc ra các box thuộc hàng giữa (nằm trong ngưỡng threshold so với anchor_cy)
+        middle_row_boxes = boxes[np.abs(cy - anchor_cy) < threshold]
+
+        # (Tuỳ chọn) Sort lại các box trong hàng giữa theo trục X từ trái qua phải
+        # cx = (middle_row_boxes[:, 0] + middle_row_boxes[:, 2]) / 2
+        # middle_row_boxes = middle_row_boxes[np.argsort(cx)]
+
+        return middle_row_boxes
+
     def check_disk_white(self, image):
         # return the image
         time_st = time.time()
@@ -235,74 +259,55 @@ class DiskCheckingService(BaseService):
                                 ErrorCode=ErrorCode.ERR_NUM_DISK[0],
                                 ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
 
-        if len(boxes) < self.num_disk * 3:
+        if len(boxes) < self.num_disk:
             return DataResponse(Result=False,
                                 ErrorCode=ErrorCode.ERR_NUM_DISK[0],
                                 ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
 
         # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
+        middle_boxes = self.get_center_row(boxes, image.shape[0])
 
         # Align image by boxes
-        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
-                                                                   expand_ratio_y=0.1)
+        crop_img, crop_rect = self.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
 
         # Update all boxes coordinates to warped image
-        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+        boxes_middle = self.update_boxes_after_crop(middle_boxes, crop_rect)
 
         # Get the coordinate for the UV image
-        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
-        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
+        uv_box_l1 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0, direction="bottom")
+        uv_box_l3 = self.get_uv_box(middle_boxes[0], crop_img.shape[1],  start_ratio=0.0, ratio_height=2.0, direction="top")
 
         # Get the point boxes by lines
-        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+        line_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        line_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
 
         # Crop the boxes by lines
-        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
+        line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
+        line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
         print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Classify the crops
         time_st = time.time()
-        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
-        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
-        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
-        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
+        cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
+        cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(line_middle_crops_bottom)
 
-        ng_boxes1 = [(box, conf) for label, box, conf in zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
-                     if label == 'ng']
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
                      label == 'ng']
-        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
+        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
                      if label == 'ng']
-        ng_boxes4 = [(box, conf) for label, box, conf in zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
-                     label == 'ng']
 
         # Merge near boxes
-        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
         ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
         ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
 
-        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
+        ng_boxes =  ng_boxes2 + ng_boxes3
+
         print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Crop the segmentation area
         time_st = time.time()
-        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                       direction='bottom')
-        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
-
-        # Segment the disks using unet crop
-        # mask_seg_1, score_seg_1 = self.disk_segmentor(crop_seg_1)
-        # mask_seg_2, score_seg_2 = self.disk_segmentor(crop_seg_2)
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
 
         mask_seg_1, _ = self.disk_segmentor_yolo(crop_seg_1)
         mask_seg_2, _ = self.disk_segmentor_yolo(crop_seg_2)
@@ -369,7 +374,7 @@ class DiskCheckingService(BaseService):
                                 ResImg=self._convert_2_base64(crop_img),
                                 MaxDiskDistance=max_disk_distance,
                                 MinDiskDistance=min_disk_distance,
-                                CropBox=str(quad_exp.tolist()),
+                                CropBox=str(crop_rect),
                                 UvBox1=str(uv_box_l1.tolist()),
                                 UvBox2=str(uv_box_l3.tolist()),
                                 Mid1=str(mids_1),
@@ -382,12 +387,13 @@ class DiskCheckingService(BaseService):
                             ResImg=self._convert_2_base64(crop_img),
                             MaxDiskDistance=max_disk_distance,
                             MinDiskDistance=min_disk_distance,
-                            CropBox=str(quad_exp.tolist()),
+                            CropBox=str(crop_rect),
                             UvBox1=str(uv_box_l1.tolist()),
                             UvBox2=str(uv_box_l3.tolist()),
                             Mid1=str(mids_1),
                             Mid2=str(mids_3),
                             )
+
 
     def check_disk_swagger(self, image):
         # return the image
@@ -854,49 +860,18 @@ class DiskCheckingService(BaseService):
     # row1, row3: arrays of boxes for top and bottom rows (format [x1,y1,x2,y2])
     # boxes: original full list of boxes (N,4)
 
-    def full_rectify_pipeline(self, image, row1, row3, expand_ratio_x=0.10, expand_ratio_y=0.10):
+    def crop_by_boxes(self, image, middle_boxes, expand_ratio_x=0.10):
         # select P1-P4 as user described
-        left_top_box = row1[np.argmin(row1[:, 0])]
-        right_top_box = row1[np.argmax(row1[:, 2])]
-        left_bot_box = row3[np.argmin(row3[:, 0])]
-        right_bot_box = row3[np.argmax(row3[:, 2])]
+        left_box = middle_boxes[np.argmin(middle_boxes[:, 0])]
+        right_box = middle_boxes[np.argmax(middle_boxes[:, 2])]
 
-        P1 = [left_top_box[0], left_top_box[1]]  # top-left
-        P2 = [right_top_box[2], right_top_box[1]]  # top-right (use x2,y1)
-        P3 = [right_bot_box[2], right_bot_box[3]]  # bottom-right (x2,y2)
-        P4 = [left_bot_box[0], left_bot_box[3]]  # bottom-left (x1,y2)
+        expanded_left_x = left_box[0] - (right_box[2] - left_box[0]) * expand_ratio_x if left_box[0] - (right_box[2] - left_box[0]) * expand_ratio_x > 0 else 0
+        expanded_right_x = right_box[2] + (right_box[2] - left_box[0]) * expand_ratio_x if right_box[2] + (right_box[2] - left_box[0]) * expand_ratio_x < image.shape[1] else image.shape[1]
 
-        quad = np.array([P1, P2, P3, P4], dtype=np.float32)
+        rect = [expanded_left_x, 0, expanded_right_x, image.shape[0]]  # x1, y1, x2, y2
+        crop = image[int(rect[1]):int(rect[3]), int(rect[0]):int(rect[2])]
 
-        warped, M, (w, h), quad_exp = self.warp_quad_to_rect(image, quad, expand_ratio_x=expand_ratio_x,
-                                                             expand_ratio_y=expand_ratio_y)
-        # Update all boxes coordinates to warped image
-
-        return warped, M, (w, h), quad_exp
-
-    @staticmethod
-    def split_rows(boxes):
-        # Tính tâm Y
-        cy = (boxes[:, 1] + boxes[:, 3]) / 2
-
-        # Sort theo Y
-        idx_sorted = np.argsort(cy)
-        boxes_sorted = boxes[idx_sorted]
-        cy_sorted = cy[idx_sorted]
-
-        # Tính khoảng cách giữa các tâm kế nhau
-        diffs = np.diff(cy_sorted)
-
-        # Tìm 2 vị trí jump lớn nhất → ngăn thành 3 hàng
-        jump_idx = np.argsort(diffs)[-2:]  # 2 bước nhảy lớn nhất
-        jump_idx = np.sort(jump_idx)
-
-        # Chia thành 3 nhóm
-        r1 = boxes_sorted[:jump_idx[0] + 1]
-        r2 = boxes_sorted[jump_idx[0] + 1: jump_idx[1] + 1]
-        r3 = boxes_sorted[jump_idx[1] + 1:]
-
-        return r1, r2, r3
+        return crop, [[rect[0], 0], [rect[2], 0], [rect[2], image.shape[0]], [rect[0], image.shape[0]]]
 
     @staticmethod
     def get_ratio_shift_box(
@@ -971,14 +946,24 @@ class DiskCheckingService(BaseService):
         return crops
 
     @staticmethod
-    def crop_box_for_segmentation(image, box_line_1, box_line_2, ratio=0.35, direction='top'):
-        y_1 = int(box_line_1[3])
-        y_2 = int(box_line_2[1])
-        ratio_height = int((y_2 - y_1) * ratio)
+    def crop_box_for_segmentation(image, box_middle, start_ratio=0.0, height_ratio=2.8, direction='top'):
+        y_1 = int(box_middle[1])
+        y_2 = int(box_middle[3])
+        start_height = int((y_2 - y_1) * start_ratio)
+        ratio_height = int((y_2 - y_1) * height_ratio)
+
         if direction == 'top':
-            box = [0, y_1, image.shape[1], y_1 + ratio_height]
+            start_y = y_1 - start_height
+            end_y = start_y - ratio_height
+            if end_y < 0:
+                end_y = 0
+            box = [0, end_y, image.shape[1], start_y]
         else:
-            box = [0, y_2 - ratio_height, image.shape[1], y_2]
+            start_y = y_2 + start_height
+            end_y = start_y + ratio_height
+            if end_y > image.shape[0]:
+                end_y = image.shape[0]
+            box = [0, start_y, image.shape[1], end_y]
 
         crop = image[box[1]:box[3], box[0]:box[2]]
         return crop, box
@@ -1167,12 +1152,12 @@ class DiskCheckingService(BaseService):
 
         return cropped
 
-    def get_uv_box(self, box, w, M, direction, ratio_h=2, ):
+    def get_uv_box(self, box, w, direction="bottom", start_ratio=0.0, ratio_height=2.0):
         x1, y1, x2, y2 = box
         height = y2 - y1
         if direction == "bottom":
-            y1_uv = y2 + 0.5 * height
-            y2_uv = y1_uv + height * ratio_h + 0.5 * height
+            y1_uv = y2 + start_ratio * height
+            y2_uv = y1_uv + height * ratio_height + start_ratio * height
 
             pts_warped = np.array([
                 [0, y1_uv],
@@ -1187,7 +1172,7 @@ class DiskCheckingService(BaseService):
             # pts_image = pts_image.reshape(-1, 2)
 
         else:
-            y1_uv = y1 - height * ratio_h - 0.5 * height
+            y1_uv = y1 - height * ratio_height - start_ratio * height
             y2_uv = y1 - 0.5 * height
 
             pts_warped = np.array([
@@ -1304,6 +1289,15 @@ class DiskCheckingService(BaseService):
                                    CountUvDisk=count_uv_disk,
                                    ThresholdImg=self._convert_2_base64(big_thresh),
                                    FinalImg=self._convert_2_base64(mask_crop))
+
+    def update_boxes_after_crop(self, middle_boxes, crop_rect):
+        for i in range(len(middle_boxes)):
+            middle_boxes[i][0] = middle_boxes[i][0] - crop_rect[0][0]
+            middle_boxes[i][1] = middle_boxes[i][1] - crop_rect[0][1]
+            middle_boxes[i][2] = middle_boxes[i][2] - crop_rect[0][0]
+            middle_boxes[i][3] = middle_boxes[i][3] - crop_rect[0][1]
+
+        return middle_boxes
 
 
 if __name__ == '__main__':
