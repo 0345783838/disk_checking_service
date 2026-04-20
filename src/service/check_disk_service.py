@@ -1228,7 +1228,7 @@ if __name__ == '__main__':
         image = cv2.imread(path)
         boxes, confs, cls_idxs = disk_checking_service.disk_point_detect_model(image)
 
-        # GET THE CLASSIFICATION BOXES
+        # region GET THE CLASSIFICATION BOXES
         # Groups the boxes by lines
         boxes_l1, boxes_l2, boxes_l3 = disk_checking_service.split_rows(boxes)
 
@@ -1238,70 +1238,64 @@ if __name__ == '__main__':
                                                                                     expand_ratio_y=0.1)
 
         # Update all boxes coordinates to warped image
-        boxes_l1 = disk_checking_service.update_boxes_after_warp(boxes_l1, M)
         boxes_l2 = disk_checking_service.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = disk_checking_service.update_boxes_after_warp(boxes_l3, M)
 
-        # # Get the point boxes by lines
-        # line_1_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        # line_2_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        # line_2_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        # line_3_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+        # Get the point boxes by lines
+        line_2_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
+        line_2_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
+
+        # Crop the boxes by lines
+        line_2_crops_top = disk_checking_service.crop_boxes(crop_img, line_2_rects_top, "top")
+        line_2_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
+
+        for i, crop_rect in enumerate(line_2_crops_bottom):
+            img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
+            cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
+
+        for j, crop_rect in enumerate(line_2_crops_top):
+            img_name = os.path.basename(path).replace('.bmp', f'_{i+j+1}.bmp')
+            cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
+
+        # endregion
+
+        # region GET THE CROPS FOR SEGMENTATION
+        # crop_seg_1 = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
+        #                                                              direction='bottom')
+        # crop_seg_2 = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+        # # crop boxes
+        # def crop_images(image):
+        #     H, W = image.shape[:2]
+        #     step = W // 6
+        #     overlap = int(step * 0.05)
         #
-        # # Crop the boxes by lines
-        # line_1_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        # line_2_crops_top = disk_checking_service.crop_boxes(crop_img, line_2_rects_top, "top")
-        # line_2_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        # line_3_crops_top = disk_checking_service.crop_boxes(crop_img, line_3_rects_top, "top")
+        #     crops = []
+        #     positions = []
         #
-        # for i, crop_rect in enumerate(line_1_crops_bottom + line_2_crops_bottom):
-        #     img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
-        #     # cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
+        #     x = 0
+        #     while x < W and len(crops) < 6:
+        #         x_start = max(0, x - overlap)
+        #         x_end = min(W, x + step + overlap)
         #
-        # for j, crop_rect in enumerate(line_2_crops_top + line_3_crops_top):
-        #     img_name = os.path.basename(path).replace('.bmp', f'_{i+j+1}.bmp')
-        #     cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
+        #         crop = image[:, x_start:x_end]
+        #         crops.append(crop)
+        #         positions.append((x_start, x_end))
+        #
+        #         x += step
+        #
+        #     return crops
+        #
+        #
+        # crops_1 = crop_images(crop_seg_1)
+        # crops_2 = crop_images(crop_seg_2)
+        #
+        # for i, crop in enumerate(crops_1 + crops_2):
+        #     img_name = os.path.basename(path).replace('.bmp', f'_crop_{i}.bmp')
+        #     cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/images/{img_name}",
+        #                 crop)
+        #
+        # # img_name_1 = os.path.basename(path).replace('.bmp', f'_seg_1.bmp')
+        # # img_name_2 = os.path.basename(path).replace('.bmp', f'_seg_2.bmp')
+        # # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_1}", crop_seg_1)
+        # # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_2}", crop_seg_2)
 
-        # --- GET THE CROPS FOR SEGMENTATION
-        crop_seg_1 = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                                     direction='bottom')
-        crop_seg_2 = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
-
-
-        # crop boxes
-        def crop_images(image):
-            H, W = image.shape[:2]
-            step = W // 6
-            overlap = int(step * 0.05)
-
-            crops = []
-            positions = []
-
-            x = 0
-            while x < W and len(crops) < 6:
-                x_start = max(0, x - overlap)
-                x_end = min(W, x + step + overlap)
-
-                crop = image[:, x_start:x_end]
-                crops.append(crop)
-                positions.append((x_start, x_end))
-
-                x += step
-
-            return crops
-
-
-        crops_1 = crop_images(crop_seg_1)
-        crops_2 = crop_images(crop_seg_2)
-
-        for i, crop in enumerate(crops_1 + crops_2):
-            img_name = os.path.basename(path).replace('.bmp', f'_crop_{i}.bmp')
-            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/images/{img_name}",
-                        crop)
-
-        # img_name_1 = os.path.basename(path).replace('.bmp', f'_seg_1.bmp')
-        # img_name_2 = os.path.basename(path).replace('.bmp', f'_seg_2.bmp')
-        # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_1}", crop_seg_1)
-        # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_2}", crop_seg_2)
-
-        # Segmentation
+        # endregion

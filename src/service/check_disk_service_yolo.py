@@ -13,6 +13,7 @@ class DiskCheckingService(BaseService):
         super().__init__()
         pass
 
+    # region Utility
     @staticmethod
     def _convert_2_base64(image):
         success, encoded_image = cv2.imencode('.png', image)
@@ -68,163 +69,6 @@ class DiskCheckingService(BaseService):
             # Put the label text
             cv2.putText(image, label, (top_left[0], top_left[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
-    def check_disk_debug(self, image, params):
-        time_st = time.time()
-        draw_image = image.copy()
-        boxes, confs, cls_idxs = self.disk_point_detect_model.detect_objects_debug(image, params.detect_threshold,
-                                                                                   params.detect_iou)
-        if len(boxes) == 0:
-            return
-
-        # if len(boxes) < self.num_disk * 3:
-        #     return
-
-        # draw bounding box
-        self.draw_detected_boxes(draw_image, boxes, confs, cls_idxs)
-        res_detect = self._convert_2_base64(draw_image)
-
-        # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
-
-        # Align image by boxes
-        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
-                                                                   expand_ratio_y=0.1)
-
-        # Update all boxes coordinates to warped image
-        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
-
-        # Get the coordinate for the UV image
-        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
-        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
-
-        # Get the point boxes by lines
-        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
-
-        # Crop the boxes by lines
-        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
-        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Classify the crops
-        time_st = time.time()
-        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
-        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
-        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
-        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
-
-        ng_boxes1 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
-                     if label == 'ng']
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
-                     label == 'ng']
-        ng_boxes3 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
-                     if label == 'ng']
-        ng_boxes4 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
-                     label == 'ng']
-
-        # Merge near boxes
-        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
-        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
-        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
-
-        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
-        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Crop the segmentation area
-        time_st = time.time()
-        crop_seg_1, box_seg_1 = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                               direction='bottom')
-        crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
-
-        # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1,
-                                                                                     params.segment_threshold,
-                                                                                     params.segment_iou)
-        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2,
-                                                                                     params.segment_threshold,
-                                                                                     params.segment_iou)
-
-        mask_seg_1 = self.clean_mask(mask_seg_1, params.disk_min_area)
-        mask_seg_2 = self.clean_mask(mask_seg_2, params.disk_min_area)
-
-        # Draw segment on crop image
-        mask_crop = np.zeros((crop_img.shape[0], mask_seg_1.shape[1]), dtype=np.uint8)
-        mask_crop[box_seg_1[1]:box_seg_1[3], box_seg_1[0]:box_seg_1[2]] = mask_seg_1
-        mask_crop[box_seg_2[1]:box_seg_2[3], box_seg_2[0]:box_seg_2[2]] = mask_seg_2
-
-        res_mark_crop = self._convert_2_base64(mask_crop)
-        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Apply caliper
-        time_st = time.time()
-        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
-        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
-        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
-        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
-        caliper_res_1 = self.get_caliper_result_debug(mask_seg_1, center_1, params.caliper_length_rate,
-                                                      params.caliper_min_edge_distance,
-                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_2 = self.get_caliper_result_debug(mask_seg_1, center_2, params.caliper_length_rate,
-                                                      params.caliper_min_edge_distance,
-                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_3 = self.get_caliper_result_debug(mask_seg_2, center_3, params.caliper_length_rate,
-                                                      params.caliper_min_edge_distance,
-                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
-        caliper_res_4 = self.get_caliper_result_debug(mask_seg_2, center_4, params.caliper_length_rate,
-                                                      params.caliper_min_edge_distance,
-                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
-        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Visualize result:
-        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
-                                                                        params.disk_min_distance,
-                                                                        params.disk_max_distance)
-        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
-                                                                        params.disk_min_distance,
-                                                                        params.disk_max_distance)
-        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
-                                                                        params.disk_min_distance,
-                                                                        params.disk_max_distance)
-        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
-                                                                        params.disk_min_distance,
-                                                                        params.disk_max_distance)
-
-        res_final = self._convert_2_base64(crop_img)
-
-        # Summary result
-        res_classification = len(ng_boxes) == 0
-        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
-        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
-                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
-
-        sum_res = res_classification and res_spacing and res_count
-
-        return DataDebugResponse(Result=sum_res,
-                                 DetectImg=res_detect,
-                                 SegmentImg=res_mark_crop,
-                                 FinalImg=res_final,
-                                 CropBox=str(quad_exp.tolist()),
-                                 UvBox1=str(uv_box_l1.tolist()),
-                                 UvBox2=str(uv_box_l3.tolist()),
-                                 Mid1=str(mids_1),
-                                 Mid2=str(mids_3),
-                                 )
-
     @staticmethod
     def get_center_row(boxes, image_height):
         # Tính tâm Y của tất cả các boxes
@@ -248,283 +92,6 @@ class DiskCheckingService(BaseService):
         # middle_row_boxes = middle_row_boxes[np.argsort(cx)]
 
         return middle_row_boxes
-
-    def check_disk_white(self, image):
-        # return the image
-        time_st = time.time()
-        boxes, confs, cls_idxs = self.disk_point_detect_model(image)
-        if len(boxes) == 0:
-            # Return false
-            return DataResponse(Result=False,
-                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
-                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
-
-        if len(boxes) < self.num_disk:
-            return DataResponse(Result=False,
-                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
-                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
-
-        # Groups the boxes by lines
-        middle_boxes = self.get_center_row(boxes, image.shape[0])
-
-        # Align image by boxes
-        crop_img, crop_rect = self.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
-
-        # Update all boxes coordinates to warped image
-        boxes_middle = self.update_boxes_after_crop(middle_boxes, crop_rect)
-
-        # Get the coordinate for the UV image
-        uv_box_l1 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0, direction="bottom")
-        uv_box_l3 = self.get_uv_box(middle_boxes[0], crop_img.shape[1],  start_ratio=0.0, ratio_height=2.0, direction="top")
-
-        # Get the point boxes by lines
-        line_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
-        line_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
-
-        # Crop the boxes by lines
-        line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
-        line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
-        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Classify the crops
-        time_st = time.time()
-        cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
-        cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(line_middle_crops_bottom)
-
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
-                     label == 'ng']
-        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
-                     if label == 'ng']
-
-        # Merge near boxes
-        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
-        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-
-        ng_boxes =  ng_boxes2 + ng_boxes3
-
-        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Crop the segmentation area
-        time_st = time.time()
-        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
-        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
-
-        mask_seg_1, _ = self.disk_segmentor_yolo(crop_seg_1)
-        mask_seg_2, _ = self.disk_segmentor_yolo(crop_seg_2)
-
-        mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
-        mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
-
-        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Apply caliper
-        time_st = time.time()
-        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
-        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
-        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
-        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
-        caliper_res_1 = self.get_caliper_result(mask_seg_1, center_1)
-        caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
-        caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
-        caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
-        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Visualize result:
-        time_st = time.time()
-        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        print(f"Draw time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        time_st = time.time()
-        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
-                                                                        self.min_disk_distance,
-                                                                        self.max_disk_distance)
-        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
-                                                                        self.min_disk_distance,
-                                                                        self.max_disk_distance)
-        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
-                                                                        self.min_disk_distance,
-                                                                        self.max_disk_distance)
-        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
-                                                                        self.min_disk_distance,
-                                                                        self.max_disk_distance)
-
-        print(f"Spacing time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        time_st = time.time()
-        # Summary result
-        res_classification = len(ng_boxes) == 0
-        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
-        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
-                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
-
-        sum_res = res_classification and res_spacing and res_count
-        min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
-        max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
-
-        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        if sum_res:
-            return DataResponse(Result=sum_res,
-                                ErrorCode=ErrorCode.PASS[0],
-                                ErrorDesc=ErrorCode.PASS[1],
-                                ResImg=self._convert_2_base64(crop_img),
-                                MaxDiskDistance=max_disk_distance,
-                                MinDiskDistance=min_disk_distance,
-                                CropBox=str(crop_rect),
-                                UvBox1=str(uv_box_l1.tolist()),
-                                UvBox2=str(uv_box_l3.tolist()),
-                                Mid1=str(mids_1),
-                                Mid2=str(mids_3),
-                                )
-
-        return DataResponse(Result=sum_res,
-                            ErrorCode=ErrorCode.ABNORMAL[0],
-                            ErrorDesc=ErrorCode.ABNORMAL[1],
-                            ResImg=self._convert_2_base64(crop_img),
-                            MaxDiskDistance=max_disk_distance,
-                            MinDiskDistance=min_disk_distance,
-                            CropBox=str(crop_rect),
-                            UvBox1=str(uv_box_l1.tolist()),
-                            UvBox2=str(uv_box_l3.tolist()),
-                            Mid1=str(mids_1),
-                            Mid2=str(mids_3),
-                            )
-
-
-    def check_disk_swagger(self, image):
-        # return the image
-        time_st = time.time()
-        boxes, confs, cls_idxs = self.disk_point_detect_model(image)
-        if len(boxes) == 0:
-            # Return false
-            return DataResponse(Result=False)
-        if len(boxes) < self.num_disk:
-            return DataResponse(Result=False)
-
-        # # draw bounding box
-        # for box, conf, cls in zip(boxes, confs, cls_idxs):
-        #     xmin = int(box[0])
-        #     ymin = int(box[1])
-        #     xmax = int(box[2])
-        #     ymax = int(box[3])
-        #     object_conf = float(conf)
-        #
-        #     # Draw the bounding box
-        #     # cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-        #
-        #     # Prepare the label with class name and confidence
-        #     label = f"{object_conf:.2f}"
-        #
-        #     # Calculate the position for the label
-        #     label_size, base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        #     top_left = (
-        #     xmin, ymin - label_size[1] - 10 if ymin - label_size[1] - 10 > 10 else ymin + label_size[1] + 10)
-        #
-        #     # Draw the label background
-        #     cv2.rectangle(image, (top_left[0] - 1, top_left[1] + base_line + 10),
-        #                   (top_left[0] + label_size[0], top_left[1] - label_size[1] + 10), (0, 255, 0), cv2.FILLED)
-        #
-        #     # Put the label text
-        #     cv2.putText(image, label, (top_left[0], top_left[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-
-        # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
-
-        # Align image by boxes
-        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
-                                                                   expand_ratio_y=0.1)
-
-        # Update all boxes coordinates to warped image
-        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
-
-        # Get the point boxes by lines
-        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
-
-        # Crop the boxes by lines
-        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
-        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Classify the crops
-        time_st = time.time()
-        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
-        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
-        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
-        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
-
-        ng_boxes1 = [(box, conf) for label, box, conf in zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
-                     if label == 'ng']
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
-                     label == 'ng']
-        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
-                     if label == 'ng']
-        ng_boxes4 = [(box, conf) for label, box, conf in zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
-                     label == 'ng']
-
-        # Merge near boxes
-        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
-        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
-        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
-
-        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
-        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Crop the segmentation area
-        time_st = time.time()
-        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                       direction='bottom')
-        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
-
-        # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo(crop_seg_1)
-        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo(crop_seg_2)
-
-        mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
-        mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
-
-        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Apply caliper
-        time_st = time.time()
-        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
-        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
-        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
-        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
-        caliper_res_1 = self.get_caliper_result(mask_seg_1, center_1)
-        caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
-        caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
-        caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
-        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        # Visualize result:
-        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
-        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
-        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-
-        self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
-                                    self.max_disk_distance)
-        self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
-                                    self.max_disk_distance)
-        self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
-                                    self.max_disk_distance)
-        self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
-                                    self.max_disk_distance)
-
-        return crop_img
 
     @staticmethod
     def visualize_edge_spacing(
@@ -923,7 +490,7 @@ class DiskCheckingService(BaseService):
         # Không clamp: numpy tự cắt nếu vượt ảnh
         return [max(x1_new, 0), max(y1_new, 0), max(x2_new, 0), max(y2_new, 0)]
 
-    def get_line_boxes_ratio_shift(self, image, line_boxes, direction, ratio_width=1.5, ratio_height=1.3,
+    def get_line_boxes_ratio_shift(self, image, line_boxes, direction, ratio_width=1.5, ratio_height=1.5,
                                    ratio_shift_y=0.5):
         boxes = []
         for box in line_boxes:
@@ -1020,6 +587,514 @@ class DiskCheckingService(BaseService):
 
         return img
 
+    @staticmethod
+    def crop_by_4pts(image, pts):
+        """
+        image: np.ndarray (H, W, C)
+        pts: array-like shape (4, 2), 4 điểm bất kỳ trên ảnh gốc
+
+        return:
+            cropped_img: ảnh đã crop + align
+            M: perspective transform matrix
+        """
+        pts = np.array(pts, dtype=np.float32)
+
+        # --- 1. Sắp xếp 4 điểm theo thứ tự: tl, tr, br, bl ---
+        def order_points(pts):
+            rect = np.zeros((4, 2), dtype=np.float32)
+
+            s = pts.sum(axis=1)
+            diff = np.diff(pts, axis=1)
+
+            rect[0] = pts[np.argmin(s)]  # top-left
+            rect[2] = pts[np.argmax(s)]  # bottom-right
+            rect[1] = pts[np.argmin(diff)]  # top-right
+            rect[3] = pts[np.argmax(diff)]  # bottom-left
+
+            return rect
+
+        rect = order_points(pts)
+
+        # --- 2. Tính width / height output ---
+        w1 = np.linalg.norm(rect[1] - rect[0])
+        w2 = np.linalg.norm(rect[2] - rect[3])
+        width = int(max(w1, w2))
+
+        h1 = np.linalg.norm(rect[3] - rect[0])
+        h2 = np.linalg.norm(rect[2] - rect[1])
+        height = int(max(h1, h2))
+
+        # --- 3. Điểm đích ---
+        dst = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]
+        ], dtype=np.float32)
+
+        # --- 4. Perspective transform ---
+        M = cv2.getPerspectiveTransform(rect, dst)
+        cropped = cv2.warpPerspective(
+            image, M, (width, height),
+            flags=cv2.INTER_LINEAR
+        )
+
+        return cropped
+
+    # endregion
+
+    # region Check Disk White Debug
+    def check_disk_debug(self, image, params):
+        time_st = time.time()
+        draw_image = image.copy()
+        boxes, confs, cls_idxs = self.disk_point_detect_model.detect_objects_debug(image, params.detect_threshold,
+                                                                                   params.detect_iou)
+        if len(boxes) == 0:
+            return
+
+        # if len(boxes) < self.num_disk * 3:
+        #     return
+
+        # draw bounding box
+        self.draw_detected_boxes(draw_image, boxes, confs, cls_idxs)
+        res_detect = self._convert_2_base64(draw_image)
+
+        # Groups the boxes by lines
+        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
+
+        # Align image by boxes
+        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
+                                                                   expand_ratio_y=0.1)
+
+        # Update all boxes coordinates to warped image
+        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
+        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
+        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+
+        # Get the coordinate for the UV image
+        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
+        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
+
+        # Get the point boxes by lines
+        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
+        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
+        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
+        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+
+        # Crop the boxes by lines
+        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
+        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
+        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
+        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
+        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Classify the crops
+        time_st = time.time()
+        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
+        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
+        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
+        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
+
+        ng_boxes1 = [(box, conf) for label, box, conf in
+                     zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
+                     if label == 'ng']
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
+                     label == 'ng']
+        ng_boxes3 = [(box, conf) for label, box, conf in
+                     zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
+                     if label == 'ng']
+        ng_boxes4 = [(box, conf) for label, box, conf in
+                     zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
+                     label == 'ng']
+
+        # Merge near boxes
+        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
+        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
+        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
+        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
+
+        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
+        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Crop the segmentation area
+        time_st = time.time()
+        crop_seg_1, box_seg_1 = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
+                                                               direction='bottom')
+        crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+
+        # Segment the disks using unet crop
+        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1,
+                                                                                     params.segment_threshold,
+                                                                                     params.segment_iou)
+        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_2,
+                                                                                     params.segment_threshold,
+                                                                                     params.segment_iou)
+
+        mask_seg_1 = self.clean_mask(mask_seg_1, params.disk_min_area)
+        mask_seg_2 = self.clean_mask(mask_seg_2, params.disk_min_area)
+
+        # Draw segment on crop image
+        mask_crop = np.zeros((crop_img.shape[0], mask_seg_1.shape[1]), dtype=np.uint8)
+        mask_crop[box_seg_1[1]:box_seg_1[3], box_seg_1[0]:box_seg_1[2]] = mask_seg_1
+        mask_crop[box_seg_2[1]:box_seg_2[3], box_seg_2[0]:box_seg_2[2]] = mask_seg_2
+
+        res_mark_crop = self._convert_2_base64(mask_crop)
+        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Apply caliper
+        time_st = time.time()
+        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
+        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
+        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
+        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
+        caliper_res_1 = self.get_caliper_result_debug(mask_seg_1, center_1, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
+                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
+        caliper_res_2 = self.get_caliper_result_debug(mask_seg_1, center_2, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
+                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
+        caliper_res_3 = self.get_caliper_result_debug(mask_seg_2, center_3, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
+                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
+        caliper_res_4 = self.get_caliper_result_debug(mask_seg_2, center_4, params.caliper_length_rate,
+                                                      params.caliper_min_edge_distance,
+                                                      params.caliper_max_edge_distance, params.caliper_thickness_list)
+        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Visualize result:
+        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
+                                                                        params.disk_min_distance,
+                                                                        params.disk_max_distance)
+
+        res_final = self._convert_2_base64(crop_img)
+
+        # Summary result
+        res_classification = len(ng_boxes) == 0
+        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
+        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
+                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
+
+        sum_res = res_classification and res_spacing and res_count
+
+        return DataDebugResponse(Result=sum_res,
+                                 DetectImg=res_detect,
+                                 SegmentImg=res_mark_crop,
+                                 FinalImg=res_final,
+                                 CropBox=str(quad_exp.tolist()),
+                                 UvBox1=str(uv_box_l1.tolist()),
+                                 UvBox2=str(uv_box_l3.tolist()),
+                                 Mid1=str(mids_1),
+                                 Mid2=str(mids_3),
+                                 )
+
+    # endregion
+
+    # region Check Disk White
+    def check_disk_white(self, image):
+        # return the image
+        time_st = time.time()
+        boxes, confs, cls_idxs = self.disk_point_detect_model(image)
+        if len(boxes) == 0:
+            # Return false
+            return DataResponse(Result=False,
+                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
+                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
+
+        if len(boxes) < self.num_disk:
+            return DataResponse(Result=False,
+                                ErrorCode=ErrorCode.ERR_NUM_DISK[0],
+                                ErrorDesc=ErrorCode.ERR_NUM_DISK[1])
+
+        # Groups the boxes by lines
+        middle_boxes = self.get_center_row(boxes, image.shape[0])
+
+        # Align image by boxes
+        crop_img, crop_rect = self.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
+
+        # Update all boxes coordinates to warped image
+        boxes_middle = self.update_boxes_after_crop(middle_boxes, crop_rect)
+
+        # Get the coordinate for the UV image
+        uv_box_l1 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0, direction="bottom")
+        uv_box_l3 = self.get_uv_box(middle_boxes[0], crop_img.shape[1],  start_ratio=0.0, ratio_height=2.0, direction="top")
+
+        # Get the point boxes by lines
+        line_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        line_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
+
+        # Crop the boxes by lines
+        line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
+        line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
+        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Classify the crops
+        time_st = time.time()
+        cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
+        cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(line_middle_crops_bottom)
+
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
+                     label == 'ng']
+        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
+                     if label == 'ng']
+
+        # Merge near boxes
+        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
+        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
+
+        ng_boxes =  ng_boxes2 + ng_boxes3
+
+        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Crop the segmentation area
+        time_st = time.time()
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
+
+        mask_seg_1, _ = self.disk_segmentor_yolo(crop_seg_1)
+        mask_seg_2, _ = self.disk_segmentor_yolo(crop_seg_2)
+
+        mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
+        mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
+
+        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Apply caliper
+        time_st = time.time()
+        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
+        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
+        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
+        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
+        caliper_res_1 = self.get_caliper_result(mask_seg_1, center_1)
+        caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
+        caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
+        caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
+        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Visualize result:
+        time_st = time.time()
+        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
+        print(f"Draw time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        time_st = time.time()
+        res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_2, dis_list_2, mids_2 = self.visualize_edge_spacing(crop_seg_1, caliper_res_2,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_3, dis_list_3, mids_3 = self.visualize_edge_spacing(crop_seg_2, caliper_res_3,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+        res_spacing_4, dis_list_4, mids_4 = self.visualize_edge_spacing(crop_seg_2, caliper_res_4,
+                                                                        self.min_disk_distance,
+                                                                        self.max_disk_distance)
+
+        print(f"Spacing time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        time_st = time.time()
+        # Summary result
+        res_classification = len(ng_boxes) == 0
+        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
+        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
+                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
+
+        sum_res = res_classification and res_spacing and res_count
+        min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+        max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+
+        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        if sum_res:
+            return DataResponse(Result=sum_res,
+                                ErrorCode=ErrorCode.PASS[0],
+                                ErrorDesc=ErrorCode.PASS[1],
+                                ResImg=self._convert_2_base64(crop_img),
+                                MaxDiskDistance=max_disk_distance,
+                                MinDiskDistance=min_disk_distance,
+                                CropBox=str(crop_rect),
+                                UvBox1=str(uv_box_l1.tolist()),
+                                UvBox2=str(uv_box_l3.tolist()),
+                                Mid1=str(mids_1),
+                                Mid2=str(mids_3),
+                                )
+
+        return DataResponse(Result=sum_res,
+                            ErrorCode=ErrorCode.ABNORMAL[0],
+                            ErrorDesc=ErrorCode.ABNORMAL[1],
+                            ResImg=self._convert_2_base64(crop_img),
+                            MaxDiskDistance=max_disk_distance,
+                            MinDiskDistance=min_disk_distance,
+                            CropBox=str(crop_rect),
+                            UvBox1=str(uv_box_l1.tolist()),
+                            UvBox2=str(uv_box_l3.tolist()),
+                            Mid1=str(mids_1),
+                            Mid2=str(mids_3),
+                            )
+
+    def update_boxes_after_crop(self, middle_boxes, crop_rect):
+        for i in range(len(middle_boxes)):
+            middle_boxes[i][0] = middle_boxes[i][0] - crop_rect[0][0]
+            middle_boxes[i][1] = middle_boxes[i][1] - crop_rect[0][1]
+            middle_boxes[i][2] = middle_boxes[i][2] - crop_rect[0][0]
+            middle_boxes[i][3] = middle_boxes[i][3] - crop_rect[0][1]
+
+        return middle_boxes
+
+    # endregion
+
+    # region Check Disk White Swagger
+    def check_disk_swagger(self, image):
+        # return the image
+        time_st = time.time()
+        boxes, confs, cls_idxs = self.disk_point_detect_model(image)
+        if len(boxes) == 0:
+            # Return false
+            return DataResponse(Result=False)
+        if len(boxes) < self.num_disk:
+            return DataResponse(Result=False)
+
+        # # draw bounding box
+        # for box, conf, cls in zip(boxes, confs, cls_idxs):
+        #     xmin = int(box[0])
+        #     ymin = int(box[1])
+        #     xmax = int(box[2])
+        #     ymax = int(box[3])
+        #     object_conf = float(conf)
+        #
+        #     # Draw the bounding box
+        #     # cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+        #
+        #     # Prepare the label with class name and confidence
+        #     label = f"{object_conf:.2f}"
+        #
+        #     # Calculate the position for the label
+        #     label_size, base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        #     top_left = (
+        #     xmin, ymin - label_size[1] - 10 if ymin - label_size[1] - 10 > 10 else ymin + label_size[1] + 10)
+        #
+        #     # Draw the label background
+        #     cv2.rectangle(image, (top_left[0] - 1, top_left[1] + base_line + 10),
+        #                   (top_left[0] + label_size[0], top_left[1] - label_size[1] + 10), (0, 255, 0), cv2.FILLED)
+        #
+        #     # Put the label text
+        #     cv2.putText(image, label, (top_left[0], top_left[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+
+        # Groups the boxes by lines
+        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
+
+        # Align image by boxes
+        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
+                                                                   expand_ratio_y=0.1)
+
+        # Update all boxes coordinates to warped image
+        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
+        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
+        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+
+        # Get the point boxes by lines
+        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
+        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
+        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
+        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+
+        # Crop the boxes by lines
+        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
+        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
+        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
+        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
+        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Classify the crops
+        time_st = time.time()
+        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
+        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
+        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
+        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
+
+        ng_boxes1 = [(box, conf) for label, box, conf in zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
+                     if label == 'ng']
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
+                     label == 'ng']
+        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
+                     if label == 'ng']
+        ng_boxes4 = [(box, conf) for label, box, conf in zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
+                     label == 'ng']
+
+        # Merge near boxes
+        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
+        ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
+        ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
+        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
+
+        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
+        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Crop the segmentation area
+        time_st = time.time()
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
+                                                       direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+
+        # Segment the disks using unet crop
+        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo(crop_seg_1)
+        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo(crop_seg_2)
+
+        mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
+        mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
+
+        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Apply caliper
+        time_st = time.time()
+        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
+        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
+        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
+        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
+        caliper_res_1 = self.get_caliper_result(mask_seg_1, center_1)
+        caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
+        caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
+        caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
+        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
+
+        # Visualize result:
+        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
+        self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
+        self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
+
+        self.visualize_edge_spacing(crop_seg_1, caliper_res_1, self.min_disk_distance,
+                                    self.max_disk_distance)
+        self.visualize_edge_spacing(crop_seg_1, caliper_res_2, self.min_disk_distance,
+                                    self.max_disk_distance)
+        self.visualize_edge_spacing(crop_seg_2, caliper_res_3, self.min_disk_distance,
+                                    self.max_disk_distance)
+        self.visualize_edge_spacing(crop_seg_2, caliper_res_4, self.min_disk_distance,
+                                    self.max_disk_distance)
+
+        return crop_img
+
+    # endregion
+
+    # region Check Disk UV
     def check_disk_uv(self, img, crop_box, uv_box_1, uv_box_2, mid_1, mid_2):
         crop_box = np.array(ast.literal_eval(crop_box), dtype=np.float32)
         uv_box_1 = np.array(ast.literal_eval(uv_box_1), dtype=np.int32)
@@ -1098,60 +1173,6 @@ class DiskCheckingService(BaseService):
 
         return thresh
 
-    @staticmethod
-    def crop_by_4pts(image, pts):
-        """
-        image: np.ndarray (H, W, C)
-        pts: array-like shape (4, 2), 4 điểm bất kỳ trên ảnh gốc
-
-        return:
-            cropped_img: ảnh đã crop + align
-            M: perspective transform matrix
-        """
-        pts = np.array(pts, dtype=np.float32)
-
-        # --- 1. Sắp xếp 4 điểm theo thứ tự: tl, tr, br, bl ---
-        def order_points(pts):
-            rect = np.zeros((4, 2), dtype=np.float32)
-
-            s = pts.sum(axis=1)
-            diff = np.diff(pts, axis=1)
-
-            rect[0] = pts[np.argmin(s)]  # top-left
-            rect[2] = pts[np.argmax(s)]  # bottom-right
-            rect[1] = pts[np.argmin(diff)]  # top-right
-            rect[3] = pts[np.argmax(diff)]  # bottom-left
-
-            return rect
-
-        rect = order_points(pts)
-
-        # --- 2. Tính width / height output ---
-        w1 = np.linalg.norm(rect[1] - rect[0])
-        w2 = np.linalg.norm(rect[2] - rect[3])
-        width = int(max(w1, w2))
-
-        h1 = np.linalg.norm(rect[3] - rect[0])
-        h2 = np.linalg.norm(rect[2] - rect[1])
-        height = int(max(h1, h2))
-
-        # --- 3. Điểm đích ---
-        dst = np.array([
-            [0, 0],
-            [width - 1, 0],
-            [width - 1, height - 1],
-            [0, height - 1]
-        ], dtype=np.float32)
-
-        # --- 4. Perspective transform ---
-        M = cv2.getPerspectiveTransform(rect, dst)
-        cropped = cv2.warpPerspective(
-            image, M, (width, height),
-            flags=cv2.INTER_LINEAR
-        )
-
-        return cropped
-
     def get_uv_box(self, box, w, direction="bottom", start_ratio=0.0, ratio_height=2.0):
         x1, y1, x2, y2 = box
         height = y2 - y1
@@ -1216,6 +1237,9 @@ class DiskCheckingService(BaseService):
             cv2.putText(uv_crop_1, f"disk_{idxs[i] + 1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         1, (0, 255, 255), 2)
 
+    # endregion
+
+    # region Check Disk UV Debug
     def check_disk_uv_debug(self, img, params):
         uv_disk_threshold = params.uv_disk_threshold
         uv_min_disk_area = params.uv_disk_min_area
@@ -1290,23 +1314,15 @@ class DiskCheckingService(BaseService):
                                    ThresholdImg=self._convert_2_base64(big_thresh),
                                    FinalImg=self._convert_2_base64(mask_crop))
 
-    def update_boxes_after_crop(self, middle_boxes, crop_rect):
-        for i in range(len(middle_boxes)):
-            middle_boxes[i][0] = middle_boxes[i][0] - crop_rect[0][0]
-            middle_boxes[i][1] = middle_boxes[i][1] - crop_rect[0][1]
-            middle_boxes[i][2] = middle_boxes[i][2] - crop_rect[0][0]
-            middle_boxes[i][3] = middle_boxes[i][3] - crop_rect[0][1]
-
-        return middle_boxes
-
+    # endregion
 
 if __name__ == '__main__':
     import glob
     from tqdm import tqdm
     import os
 
-    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_detect\new_data\images"
-    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_new_data\out_rect"
+    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_20_04\images"
+    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_20_04\out_rect"
     save_path_bottom_rect = f"{OUTPUT_PATH}/bottom"
     save_path_top_rect = f"{OUTPUT_PATH}/top"
     os.makedirs(save_path_bottom_rect, exist_ok=True)
@@ -1320,51 +1336,39 @@ if __name__ == '__main__':
         image = cv2.imread(path)
         boxes, confs, cls_idxs = disk_checking_service.disk_point_detect_model(image)
 
-        # GET THE CLASSIFICATION BOXES
+
         # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = disk_checking_service.split_rows(boxes)
+        middle_boxes = disk_checking_service.get_center_row(boxes, image.shape[0])
 
         # Align image by boxes
-        crop_img, M, (w, h), quad_exp = disk_checking_service.full_rectify_pipeline(image, boxes_l1, boxes_l3,
-                                                                                    expand_ratio_x=0.2,
-                                                                                    expand_ratio_y=0.1)
+        crop_img, crop_rect = disk_checking_service.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
 
         # Update all boxes coordinates to warped image
-        boxes_l1 = disk_checking_service.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = disk_checking_service.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = disk_checking_service.update_boxes_after_warp(boxes_l3, M)
+        boxes_middle = disk_checking_service.update_boxes_after_crop(middle_boxes, crop_rect)
 
+        # region GET THE CLASSIFICATION BOXES
 
+        # # Get the point boxes by lines
+        # line_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        # line_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
+        #
+        # # Crop the boxes by lines
+        # line_middle_crops_top = disk_checking_service.crop_boxes(crop_img, line_rects_top, "top")
+        # line_middle_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_rects_bottom, "bottom")
+        #
+        # for i, crop_rect in enumerate(line_middle_crops_top):
+        #     img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
+        #     cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
+        #
+        # for j, crop_rect in enumerate(line_middle_crops_bottom):
+        #     img_name = os.path.basename(path).replace('.bmp', f'_{i + j + 1}.bmp')
+        #     cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
 
-        ### GET DATA CLASSIFY
-        # Get the point boxes by lines
-        line_1_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+        # endregion
 
-        # Crop the boxes by lines
-        line_1_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = disk_checking_service.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = disk_checking_service.crop_boxes(crop_img, line_3_rects_top, "top")
-
-        for i, crop_rect in enumerate(line_1_crops_bottom + line_2_crops_bottom):
-            img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
-            cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
-
-        for j, crop_rect in enumerate(line_2_crops_top + line_3_crops_top):
-            img_name = os.path.basename(path).replace('.bmp', f'_{i+j+1}.bmp')
-            cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
-
-
-
-        #### --- GET THE CROPS FOR SEGMENTATION
-        crop_seg_1, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                                     direction='bottom')
-        crop_seg_2, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
-
-
+        # region GET THE CROPS FOR SEGMENTATION
+        crop_seg_1, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
+        crop_seg_2, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_middle[0])
         # crop boxes
         def crop_images(image):
             H, W = image.shape[:2]
@@ -1393,5 +1397,12 @@ if __name__ == '__main__':
 
         for i, crop in enumerate(crops_1 + crops_2):
             img_name = os.path.basename(path).replace('.bmp', f'_crop_{i}.bmp')
-            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment\images/{img_name}",
+            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_segment\new_data_20_04/images/{img_name}",
                         crop)
+
+        # img_name_1 = os.path.basename(path).replace('.bmp', f'_seg_1.bmp')
+        # img_name_2 = os.path.basename(path).replace('.bmp', f'_seg_2.bmp')
+        # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_1}", crop_seg_1)
+        # cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\testing\out_rect_segment/{img_name_2}", crop_seg_2)
+
+        # endregion
