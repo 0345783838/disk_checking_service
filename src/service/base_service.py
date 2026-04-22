@@ -61,7 +61,8 @@ MAX_DISK_DISTANCE = config('MAX_DISK_DISTANCE', cast=float)
 MIN_DISK_DISTANCE = config('MIN_DISK_DISTANCE', cast=float)
 MIN_DISK_AREA = config('MIN_DISK_AREA', cast=float)
 
-UV_DISK_THRESHOLD = config('UV_DISK_THRESHOLD', cast=float)
+UV_DISK_LOWER_THRESHOLD = config('UV_DISK_LOWER_THRESHOLD', cast=lambda v: tuple(int(s.strip()) for s in v.split(',')))
+UV_DISK_UPPER_THRESHOLD = config('UV_DISK_UPPER_THRESHOLD', cast=lambda v: tuple(int(s.strip()) for s in v.split(',')))
 UV_MIN_DISK_AREA = config('UV_MIN_DISK_AREA', cast=float)
 
 
@@ -102,7 +103,8 @@ max_disk_distance = MAX_DISK_DISTANCE
 min_disk_distance = MIN_DISK_DISTANCE
 min_disk_area = MIN_DISK_AREA
 
-uv_disk_threshold = UV_DISK_THRESHOLD
+uv_disk_lower_threshold = UV_DISK_LOWER_THRESHOLD
+uv_disk_upper_threshold = UV_DISK_UPPER_THRESHOLD
 uv_min_disk_area = UV_MIN_DISK_AREA
 
 plc_controller = MbClient()
@@ -122,7 +124,8 @@ class BaseService:
             self.min_disk_distance = min_disk_distance
             self.min_disk_area = min_disk_area
 
-            self.uv_disk_threshold = uv_disk_threshold
+            self.uv_disk_lower_threshold = uv_disk_lower_threshold
+            self.uv_disk_upper_threshold = uv_disk_upper_threshold
             self.uv_min_disk_area = uv_min_disk_area
 
             self.plc_controller = plc_controller

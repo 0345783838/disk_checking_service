@@ -587,6 +587,18 @@ class DiskCheckingService(BaseService):
 
         return img
 
+    def remove_mask_noise_uv(self, img, min_disk_area):
+        kernel = np.ones((3, 3), np.uint8)
+        closed = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < min_disk_area:
+                cv2.drawContours(closed, [contour], -1, 0, -1)
+
+        return closed
+
     @staticmethod
     def crop_by_4pts(image, pts):
         """
@@ -652,75 +664,57 @@ class DiskCheckingService(BaseService):
         if len(boxes) == 0:
             return
 
-        # if len(boxes) < self.num_disk * 3:
-        #     return
-
         # draw bounding box
         self.draw_detected_boxes(draw_image, boxes, confs, cls_idxs)
         res_detect = self._convert_2_base64(draw_image)
 
         # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
+        middle_boxes = self.get_center_row(boxes, image.shape[0])
 
         # Align image by boxes
-        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
-                                                                   expand_ratio_y=0.1)
+        crop_img, crop_rect = self.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
 
         # Update all boxes coordinates to warped image
-        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+        boxes_middle = self.update_boxes_after_crop(middle_boxes, crop_rect)
 
         # Get the coordinate for the UV image
-        uv_box_l1 = self.get_uv_box(boxes_l1[0], w, M, "bottom")
-        uv_box_l3 = self.get_uv_box(boxes_l3[0], w, M, "top")
+        uv_box_l1 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0,
+                                    direction="bottom")
+        uv_box_l3 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0,
+                                    direction="top")
 
         # Get the point boxes by lines
-        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+        line_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        line_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
 
         # Crop the boxes by lines
-        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
+        line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
+        line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
         print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Classify the crops
         time_st = time.time()
-        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
-        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
-        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
-        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
+        cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
+        cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(
+            line_middle_crops_bottom)
 
-        ng_boxes1 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
-                     if label == 'ng']
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
                      label == 'ng']
         ng_boxes3 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
+                     zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
                      if label == 'ng']
-        ng_boxes4 = [(box, conf) for label, box, conf in
-                     zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
-                     label == 'ng']
 
         # Merge near boxes
-        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
         ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
         ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
 
-        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
+        ng_boxes =  ng_boxes2 + ng_boxes3
         print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Crop the segmentation area
         time_st = time.time()
-        crop_seg_1, box_seg_1 = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                               direction='bottom')
-        crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+        crop_seg_1, box_seg_1 = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
+        crop_seg_2, box_seg_2 = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
 
         # Segment the disks using unet crop
         mask_seg_1, score_seg_1 = self.disk_segmentor_yolo.segment_large_image_debug(crop_seg_1,
@@ -794,7 +788,7 @@ class DiskCheckingService(BaseService):
                                  DetectImg=res_detect,
                                  SegmentImg=res_mark_crop,
                                  FinalImg=res_final,
-                                 CropBox=str(quad_exp.tolist()),
+                                 CropBox=str(crop_rect),
                                  UvBox1=str(uv_box_l1.tolist()),
                                  UvBox2=str(uv_box_l3.tolist()),
                                  Mid1=str(mids_1),
@@ -971,91 +965,53 @@ class DiskCheckingService(BaseService):
         if len(boxes) < self.num_disk:
             return DataResponse(Result=False)
 
-        # # draw bounding box
-        # for box, conf, cls in zip(boxes, confs, cls_idxs):
-        #     xmin = int(box[0])
-        #     ymin = int(box[1])
-        #     xmax = int(box[2])
-        #     ymax = int(box[3])
-        #     object_conf = float(conf)
-        #
-        #     # Draw the bounding box
-        #     # cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-        #
-        #     # Prepare the label with class name and confidence
-        #     label = f"{object_conf:.2f}"
-        #
-        #     # Calculate the position for the label
-        #     label_size, base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        #     top_left = (
-        #     xmin, ymin - label_size[1] - 10 if ymin - label_size[1] - 10 > 10 else ymin + label_size[1] + 10)
-        #
-        #     # Draw the label background
-        #     cv2.rectangle(image, (top_left[0] - 1, top_left[1] + base_line + 10),
-        #                   (top_left[0] + label_size[0], top_left[1] - label_size[1] + 10), (0, 255, 0), cv2.FILLED)
-        #
-        #     # Put the label text
-        #     cv2.putText(image, label, (top_left[0], top_left[1] + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-
         # Groups the boxes by lines
-        boxes_l1, boxes_l2, boxes_l3 = self.split_rows(boxes)
+        middle_boxes = self.get_center_row(boxes, image.shape[0])
 
         # Align image by boxes
-        crop_img, M, (w, h), quad_exp = self.full_rectify_pipeline(image, boxes_l1, boxes_l3, expand_ratio_x=0.2,
-                                                                   expand_ratio_y=0.1)
+        crop_img, crop_rect = self.crop_by_boxes(image, middle_boxes, expand_ratio_x=0.15)
 
         # Update all boxes coordinates to warped image
-        boxes_l1 = self.update_boxes_after_warp(boxes_l1, M)
-        boxes_l2 = self.update_boxes_after_warp(boxes_l2, M)
-        boxes_l3 = self.update_boxes_after_warp(boxes_l3, M)
+        boxes_middle = self.update_boxes_after_crop(middle_boxes, crop_rect)
+
+        # Get the coordinate for the UV image
+        uv_box_l1 = self.get_uv_box(middle_boxes[0], crop_img.shape[1], start_ratio=0.0, ratio_height=2.0, direction="bottom")
+        uv_box_l3 = self.get_uv_box(middle_boxes[0], crop_img.shape[1],  start_ratio=0.0, ratio_height=2.0, direction="top")
 
         # Get the point boxes by lines
-        line_1_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l1, "bottom")
-        line_2_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "top")
-        line_2_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_l2, "bottom")
-        line_3_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_l3, "top")
+        line_rects_top = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        line_rects_bottom = self.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
 
         # Crop the boxes by lines
-        line_1_crops_bottom = self.crop_boxes(crop_img, line_1_rects_bottom, "bottom")
-        line_2_crops_top = self.crop_boxes(crop_img, line_2_rects_top, "top")
-        line_2_crops_bottom = self.crop_boxes(crop_img, line_2_rects_bottom, "bottom")
-        line_3_crops_top = self.crop_boxes(crop_img, line_3_rects_top, "top")
+        line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
+        line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
         print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Classify the crops
         time_st = time.time()
-        cls_res_l1_bottom, cls_conf_l1_bottom = self.point_classification_model.predict_batch(line_1_crops_bottom)
-        cls_res_l2_top, cls_conf_l2_top = self.point_classification_model.predict_batch(line_2_crops_top)
-        cls_res_l2_bottom, cls_conf_l2_bottom = self.point_classification_model.predict_batch(line_2_crops_bottom)
-        cls_res_l3_bottom, cls_conf_l3_bottom = self.point_classification_model.predict_batch(line_3_crops_top)
+        cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
+        cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(line_middle_crops_bottom)
 
-        ng_boxes1 = [(box, conf) for label, box, conf in zip(cls_res_l1_bottom, line_1_rects_bottom, cls_conf_l1_bottom)
-                     if label == 'ng']
-        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_l2_top, line_2_rects_top, cls_conf_l2_top) if
+        ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
                      label == 'ng']
-        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_l2_bottom, line_2_rects_bottom, cls_conf_l2_bottom)
+        ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
                      if label == 'ng']
-        ng_boxes4 = [(box, conf) for label, box, conf in zip(cls_res_l3_bottom, line_3_rects_top, cls_conf_l3_bottom) if
-                     label == 'ng']
 
         # Merge near boxes
-        ng_boxes1 = self.merge_boxes_1d_x(ng_boxes1)
         ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
         ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
-        ng_boxes4 = self.merge_boxes_1d_x(ng_boxes4)
 
-        ng_boxes = ng_boxes1 + ng_boxes2 + ng_boxes3 + ng_boxes4
+        ng_boxes =  ng_boxes2 + ng_boxes3
+
         print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Crop the segmentation area
         time_st = time.time()
-        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_l1[0], boxes_l2[0], ratio=0.35,
-                                                       direction='bottom')
-        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_l2[0], boxes_l3[0])
+        crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
+        crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
 
-        # Segment the disks using unet crop
-        mask_seg_1, score_seg_1 = self.disk_segmentor_yolo(crop_seg_1)
-        mask_seg_2, score_seg_2 = self.disk_segmentor_yolo(crop_seg_2)
+        mask_seg_1, _ = self.disk_segmentor_yolo(crop_seg_1)
+        mask_seg_2, _ = self.disk_segmentor_yolo(crop_seg_2)
 
         mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
@@ -1110,11 +1066,11 @@ class DiskCheckingService(BaseService):
         uv_crop_1 = crop_img[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]]
         uv_crop_2 = crop_img[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]]
 
-        uv_thresh_1 = self.preprocess_uv_image(uv_crop_1, threshold=self.uv_disk_threshold)
-        uv_thresh_2 = self.preprocess_uv_image(uv_crop_2, threshold=self.uv_disk_threshold)
+        uv_thresh_1 = self.preprocess_uv_image_hsv(uv_crop_1, lower=self.uv_disk_lower_threshold, upper=self.uv_disk_upper_threshold)
+        uv_thresh_2 = self.preprocess_uv_image_hsv(uv_crop_2, lower=self.uv_disk_lower_threshold, upper=self.uv_disk_upper_threshold)
 
-        uv_thresh_1 = self.remove_mask_noise(uv_thresh_1, min_disk_area=self.uv_min_disk_area)
-        uv_thresh_2 = self.remove_mask_noise(uv_thresh_2, min_disk_area=self.uv_min_disk_area)
+        uv_thresh_1 = self.remove_mask_noise_uv(uv_thresh_1, min_disk_area=self.uv_min_disk_area)
+        uv_thresh_2 = self.remove_mask_noise_uv(uv_thresh_2, min_disk_area=self.uv_min_disk_area)
 
         caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1,
                                                       center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),
@@ -1173,6 +1129,13 @@ class DiskCheckingService(BaseService):
 
         return thresh
 
+    @staticmethod
+    def preprocess_uv_image_hsv(image, lower, upper):
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        thresh = cv2.inRange(hsv, lower, upper)
+
+        return thresh
+
     def get_uv_box(self, box, w, direction="bottom", start_ratio=0.0, ratio_height=2.0):
         x1, y1, x2, y2 = box
         height = y2 - y1
@@ -1187,14 +1150,9 @@ class DiskCheckingService(BaseService):
                 [0, y2_uv]
             ], dtype=np.float32)
 
-            # pts_warped = pts_warped.reshape(-1, 1, 2)
-            # M_inv = np.linalg.inv(M)
-            # pts_image = cv2.perspectiveTransform(pts_warped, M_inv)
-            # pts_image = pts_image.reshape(-1, 2)
-
         else:
             y1_uv = y1 - height * ratio_height - start_ratio * height
-            y2_uv = y1 - 0.5 * height
+            y2_uv = y1 - start_ratio * height
 
             pts_warped = np.array([
                 [0, y1_uv],
@@ -1234,14 +1192,16 @@ class DiskCheckingService(BaseService):
 
         # vẽ số index lên điểm các điểm trong mid_1
         for i, pt in enumerate(mid_uv_1):
-            cv2.putText(uv_crop_1, f"disk_{idxs[i] + 1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.putText(uv_crop_1, f"{idxs[i] + 1}", (int(pt[0]) - 30, int(pt[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         1, (0, 255, 255), 2)
 
     # endregion
 
     # region Check Disk UV Debug
     def check_disk_uv_debug(self, img, params):
-        uv_disk_threshold = params.uv_disk_threshold
+        uv_disk_lower_threshold = tuple(params.uv_disk_lower_threshold)
+        uv_disk_upper_threshold = tuple(params.uv_disk_upper_threshold)
+
         uv_min_disk_area = params.uv_disk_min_area
         crop_box = np.array(ast.literal_eval(params.crop_box), dtype=np.float32)
         uv_box_1 = np.array(ast.literal_eval(params.uv_box_1), dtype=np.int32)
@@ -1257,11 +1217,11 @@ class DiskCheckingService(BaseService):
         uv_crop_1 = crop_img[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]]
         uv_crop_2 = crop_img[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]]
 
-        uv_thresh_1 = self.preprocess_uv_image(uv_crop_1, threshold=uv_disk_threshold)
-        uv_thresh_2 = self.preprocess_uv_image(uv_crop_2, threshold=uv_disk_threshold)
+        uv_thresh_1 = self.preprocess_uv_image_hsv(uv_crop_1, uv_disk_lower_threshold, uv_disk_upper_threshold)
+        uv_thresh_2 = self.preprocess_uv_image_hsv(uv_crop_2, uv_disk_lower_threshold, uv_disk_upper_threshold)
 
-        uv_thresh_1 = self.remove_mask_noise(uv_thresh_1, min_disk_area=uv_min_disk_area)
-        uv_thresh_2 = self.remove_mask_noise(uv_thresh_2, min_disk_area=uv_min_disk_area)
+        uv_thresh_1 = self.remove_mask_noise_uv(uv_thresh_1, min_disk_area=uv_min_disk_area)
+        uv_thresh_2 = self.remove_mask_noise_uv(uv_thresh_2, min_disk_area=uv_min_disk_area)
 
         caliper_res_1 = self.get_caliper_result_debug(uv_thresh_1,
                                                       center=(uv_crop_1.shape[1] // 2, uv_crop_1.shape[0] // 2),

@@ -38,7 +38,8 @@ class Params(BaseModel):
 
 
 class UvParams(BaseModel):
-    uv_disk_threshold: int
+    uv_disk_lower_threshold: List[int]
+    uv_disk_upper_threshold: List[int]
     uv_disk_min_area: float
 
     crop_box: str
