@@ -202,24 +202,14 @@ def disconnect_plc():
     return {"Success": plc_controlling_service.disconnect_plc()}
 
 
-@communication_router.get(path='/control_uv_1')
+@communication_router.get(path='/control_uv')
 def control_uv(status: bool = Query(...)):
-    return {"Success": plc_controlling_service.turn_on_uv_1() if status else plc_controlling_service.turn_off_uv_1()}
+    return {"Success": plc_controlling_service.turn_on_uv() if status else plc_controlling_service.turn_off_uv()}
 
 
-@communication_router.get(path='/control_uv_2')
-def control_uv(status: bool = Query(...)):
-    return {"Success": plc_controlling_service.turn_on_uv_2() if status else plc_controlling_service.turn_off_uv_2()}
-
-
-@communication_router.get(path='/control_led_1')
+@communication_router.get(path='/control_led')
 def control_led_1(status: bool = Query(...)):
-    return {"Success": plc_controlling_service.turn_on_led_1() if status else plc_controlling_service.turn_off_led_1()}
-
-
-@communication_router.get(path='/control_led_2')
-def control_led_2(status: bool = Query(...)):
-    return {"Success": plc_controlling_service.turn_on_led_2() if status else plc_controlling_service.turn_off_led_2()}
+    return {"Success": plc_controlling_service.turn_on_led() if status else plc_controlling_service.turn_off_led()}
 
 
 @communication_router.get(path='/check_connection')
@@ -238,6 +228,11 @@ def reset_trigger():
     return {"Success": plc_controlling_service.reset_trigger()}
 
 
-@communication_router.get(path='/on_error')
-def on_error():
-    return {"Success": plc_controlling_service.plc_controller.on_error()}
+@communication_router.get(path='/on_error_abnormal')
+def on_error_abnormal():
+    return {"Success": plc_controlling_service.on_error_abnormal()}
+
+
+@communication_router.get(path='/on_error_mixing')
+def on_error_abnormal():
+    return {"Success": plc_controlling_service.on_error_mixing()}

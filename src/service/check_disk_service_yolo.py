@@ -2,7 +2,8 @@ import math
 import time
 import cv2
 import numpy as np
-from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse, DataResponseUv, DataDebugUVResponse
+from src.dtos.meta import DataResponse, ErrorCode, DataDebugResponse, DataResponseUv, DataDebugUVResponse, \
+    InspectionState, ClassifyResult
 from src.service.base_service import BaseService
 import base64
 import ast
@@ -800,7 +801,6 @@ class DiskCheckingService(BaseService):
     # region Check Disk White
     def check_disk_white(self, image):
         # return the image
-        time_st = time.time()
         boxes, confs, cls_idxs = self.disk_point_detect_model(image)
         if len(boxes) == 0:
             # Return false
@@ -833,28 +833,33 @@ class DiskCheckingService(BaseService):
         # Crop the boxes by lines
         line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
         line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
-        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Classify the crops
-        time_st = time.time()
         cls_res_middle_top, cls_conf_middle_top = self.point_classification_model.predict_batch(line_middle_crops_top)
         cls_res_middle_bottom, cls_conf_middle_bottom = self.point_classification_model.predict_batch(line_middle_crops_bottom)
 
         ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
-                     label == 'ng']
+                     label == ClassifyResult.NG]
         ng_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
-                     if label == 'ng']
+                     if label == ClassifyResult.NG]
+
+        no_disk_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
+                          label == ClassifyResult.NO_DISK]
+        no_disk_boxes3 = [(box, conf) for label, box, conf in zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
+                          if label == ClassifyResult.NO_DISK]
 
         # Merge near boxes
         ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
         ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
 
-        ng_boxes =  ng_boxes2 + ng_boxes3
+        no_disk_boxes2 = self.merge_boxes_1d_x(no_disk_boxes2)
+        no_disk_boxes3 = self.merge_boxes_1d_x(no_disk_boxes3)
 
-        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
+        # Get the final boxes
+        ng_boxes = ng_boxes2 + ng_boxes3
+        no_disk_boxes = no_disk_boxes2 + no_disk_boxes3
 
         # Crop the segmentation area
-        time_st = time.time()
         crop_seg_1, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
         crop_seg_2, _ = self.crop_box_for_segmentation(crop_img, boxes_middle[0])
 
@@ -864,10 +869,7 @@ class DiskCheckingService(BaseService):
         mask_seg_1 = self.clean_mask(mask_seg_1, self.min_disk_area)
         mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
 
-        print(f"Segmentation time: {(time.time() - time_st) * 1000:.2f} ms")
-
         # Apply caliper
-        time_st = time.time()
         center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
         center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
         center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
@@ -876,18 +878,15 @@ class DiskCheckingService(BaseService):
         caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
         caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
         caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
-        print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Visualize result:
-        time_st = time.time()
         self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
+        self.draw_boxes(crop_img, no_disk_boxes, (0, 102, 255))
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_4)
-        print(f"Draw time: {(time.time() - time_st) * 1000:.2f} ms")
 
-        time_st = time.time()
         res_spacing_1, dis_list_1, mids_1 = self.visualize_edge_spacing(crop_seg_1, caliper_res_1,
                                                                         self.min_disk_distance,
                                                                         self.max_disk_distance)
@@ -901,38 +900,46 @@ class DiskCheckingService(BaseService):
                                                                         self.min_disk_distance,
                                                                         self.max_disk_distance)
 
-        print(f"Spacing time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        time_st = time.time()
         # Summary result
-        res_classification = len(ng_boxes) == 0
-        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
-        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
-                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
+        res_classification = InspectionState.NG
+        if len(ng_boxes) == 0 and len(no_disk_boxes) == 0:
+            res_classification = InspectionState.OK
+        elif len(ng_boxes) > 0:
+            res_classification = InspectionState.NG
+        elif len(no_disk_boxes) > 0:
+            res_classification = InspectionState.WARNING
 
-        sum_res = res_classification and res_spacing and res_count
+        res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
+        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) > self.num_disk
+                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) > self.num_disk)
+
+        ##########################
+        # Summary result
+        ##########################
+        # -- first value
+        sum_res = InspectionState.NG
+        error_code = ErrorCode.ABNORMAL[0]
+        error_desc = ErrorCode.ABNORMAL[1]
+        if res_classification == InspectionState.OK and res_spacing and res_count:
+            sum_res = InspectionState.OK
+            error_code = ErrorCode.PASS[0]
+            error_desc = ErrorCode.PASS[1]
+        else:
+            if res_classification == InspectionState.WARNING and res_spacing and res_count:
+                sum_res = InspectionState.WARNING
+                error_code = ErrorCode.WARNING_NUM_DISK[0]
+                error_desc = ErrorCode.WARNING_NUM_DISK[1]
+            else:
+                sum_res = InspectionState.NG
+                error_code = ErrorCode.ABNORMAL[0]
+                error_desc = ErrorCode.ABNORMAL[1]
+
         min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
         max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
 
-        print(f"Summary time: {(time.time() - time_st) * 1000:.2f} ms")
-
-        if sum_res:
-            return DataResponse(Result=sum_res,
-                                ErrorCode=ErrorCode.PASS[0],
-                                ErrorDesc=ErrorCode.PASS[1],
-                                ResImg=self._convert_2_base64(crop_img),
-                                MaxDiskDistance=max_disk_distance,
-                                MinDiskDistance=min_disk_distance,
-                                CropBox=str(crop_rect),
-                                UvBox1=str(uv_box_l1.tolist()),
-                                UvBox2=str(uv_box_l3.tolist()),
-                                Mid1=str(mids_1),
-                                Mid2=str(mids_3),
-                                )
-
         return DataResponse(Result=sum_res,
-                            ErrorCode=ErrorCode.ABNORMAL[0],
-                            ErrorDesc=ErrorCode.ABNORMAL[1],
+                            ErrorCode=error_code,
+                            ErrorDesc=error_desc,
                             ResImg=self._convert_2_base64(crop_img),
                             MaxDiskDistance=max_disk_distance,
                             MinDiskDistance=min_disk_distance,
@@ -1106,9 +1113,18 @@ class DiskCheckingService(BaseService):
         mask_crop[uv_box_1[0][1]:uv_box_1[2][1], uv_box_1[0][0]:uv_box_1[2][0]] = result_1
         mask_crop[uv_box_2[0][1]:uv_box_2[2][1], uv_box_2[0][0]:uv_box_2[2][0]] = result_2
 
-        count_uv_disk = len(caliper_res_1["pairs"]) + len(caliper_res_2["pairs"])
+        count_uv_disk_1 = len(caliper_res_1["pairs"])
+        count_uv_disk_2 = len(caliper_res_2["pairs"])
 
-        if count_uv_disk == 0:
+        count_white_disk_1 = len(mid_1)
+        count_white_disk_2 = len(mid_2)
+
+        count_uv_disk = count_uv_disk_1 + count_uv_disk_2
+
+        line_1_ok = count_uv_disk_1 == count_white_disk_1
+        line_2_ok = count_uv_disk_2 == count_white_disk_2
+
+        if count_uv_disk == 0 or (line_1_ok and line_2_ok):
             return DataResponseUv(Result=True,
                                   CountUvDisk=0,
                                   ErrorCode=ErrorCode.PASS[0],
@@ -1117,8 +1133,8 @@ class DiskCheckingService(BaseService):
 
         return DataResponseUv(Result=False,
                               CountUvDisk=count_uv_disk,
-                              ErrorCode=ErrorCode.ERR_NUM_UV_DISK[0],
-                              ErrorDesc=ErrorCode.ERR_NUM_UV_DISK[1],
+                              ErrorCode=ErrorCode.ERR_MIXING_DISK[0],
+                              ErrorDesc=ErrorCode.ERR_MIXING_DISK[1],
                               ResImg=self._convert_2_base64(mask_crop))
 
     @staticmethod

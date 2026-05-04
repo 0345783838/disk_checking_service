@@ -54,41 +54,35 @@ class MbClient:
 
     # ====================================================
 
-    def on_UV_1(self):
-        return self.__write_bit(2, True)
+    def on_uv(self):
+        return self.__write_bit(20, True)
 
-    def off_UV_1(self):
-        return self.__write_bit(2, False)
+    def off_uv(self):
+        return self.__write_bit(20, False)
 
-    def on_UV_2(self):
-        return self.__write_bit(3, True)
+    def on_led(self):
+        return self.__write_bit(21, True)
 
-    def off_UV_2(self):
-        return self.__write_bit(3, False)
+    def off_led(self):
+        return self.__write_bit(21, False)
 
-    def on_LED_1(self):
-        return self.__write_bit(4, True)
+    def on_error_abnormal(self):
+        return self.__write_bit(32, True)
 
-    def off_LED_1(self):
-        return self.__write_bit(4, False)
+    def off_error_abnormal(self):
+        return self.__write_bit(32, False)
 
-    def on_LED_2(self):
-        return self.__write_bit(5, True)
+    def on_error_mixing(self):
+        return self.__write_bit(33, True)
 
-    def off_LED_2(self):
-        return self.__write_bit(5, False)
-
-    def on_error(self):
-        return self.__write_bit(1, True)
-
-    def off_error(self):
-        return self.__write_bit(1, False)
+    def off_error_mixing(self):
+        return self.__write_bit(33, False)
 
     def read_trigger(self):
-        return self.__read_bit(10)
+        return self.__read_bit(0)
 
     def reset_trigger(self):
-        return self.__write_bit(10, False)
+        return self.__write_bit(0, False)
 
     def __write_bit(self, addr: int, value: bool = False):
         try:
