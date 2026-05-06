@@ -292,7 +292,7 @@ class DiskCheckingService(BaseService):
         ).clip(0, 255).astype(np.uint8)
 
     @staticmethod
-    def draw_boxes(image, boxes, color):
+    def draw_boxes(image, boxes, color, class_name):
         for box in boxes:
             if type(box) == tuple:
                 bb = box[0]
@@ -301,16 +301,16 @@ class DiskCheckingService(BaseService):
                 cv2.putText(image, f"{score:.2f}", (int(bb[0]), int(bb[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             else:
                 box_height = box[3] - box[1]
-                new_y1 = int(box[1] + box_height * 0.2)
-                new_y2 = int(box[3] - box_height * 0.2)
+                new_y1 = int(box[1] + box_height * 0.3)
+                new_y2 = int(box[3] - box_height * 0.3)
                 offset_x = 4
                 offset_y = 2
-                (tw, th), _ = cv2.getTextSize(f"{'NG'}", cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                (tw, th), _ = cv2.getTextSize(f"{class_name.upper()}", cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
                 cv2.rectangle(image, (int(box[0]), new_y1), (int(box[2]), new_y2), color, 2)
 
-                cv2.rectangle(image, (int(box[0]), new_y1 - th - offset_y), (int(box[0]) + tw + offset_x, new_y1),
+                cv2.rectangle(image, (int(box[0]), new_y2 - th - offset_y), (int(box[0]) + tw + offset_x, new_y2),
                               color, cv2.FILLED)
-                cv2.putText(image, f"{'NG'}", (int(box[0]) + offset_x // 2, new_y1 - offset_y // 2),
+                cv2.putText(image, f"{class_name.upper()}", (int(box[0]) + offset_x // 2, new_y2 - offset_y // 2),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
     @staticmethod
@@ -757,7 +757,7 @@ class DiskCheckingService(BaseService):
         print(f"Caliper time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Visualize result:
-        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
+        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255), ClassifyResult.NG)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
@@ -870,18 +870,18 @@ class DiskCheckingService(BaseService):
         mask_seg_2 = self.clean_mask(mask_seg_2, self.min_disk_area)
 
         # Apply caliper
-        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.75)
-        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.25)
-        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.25
-        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.75
+        center_1 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.85)
+        center_2 = mask_seg_1.shape[1] // 2, int(mask_seg_1.shape[0] * 0.15)
+        center_3 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.15
+        center_4 = mask_seg_2.shape[1] // 2, mask_seg_2.shape[0] * 0.85
         caliper_res_1 = self.get_caliper_result(mask_seg_1, center_1)
         caliper_res_2 = self.get_caliper_result(mask_seg_1, center_2)
         caliper_res_3 = self.get_caliper_result(mask_seg_2, center_3)
         caliper_res_4 = self.get_caliper_result(mask_seg_2, center_4)
 
         # Visualize result:
-        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255))
-        self.draw_boxes(crop_img, no_disk_boxes, (0, 102, 255))
+        self.draw_boxes(crop_img, ng_boxes, (0, 0, 255), ClassifyResult.NG)
+        self.draw_boxes(crop_img, no_disk_boxes, (0, 102, 255), "Empty")
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
@@ -910,8 +910,8 @@ class DiskCheckingService(BaseService):
             res_classification = InspectionState.WARNING
 
         res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
-        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) > self.num_disk
-                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) > self.num_disk)
+        res_count = (len(caliper_res_1["pairs"]) <= self.num_disk and len(caliper_res_2["pairs"]) <= self.num_disk
+                     and len(caliper_res_3["pairs"]) <= self.num_disk and len(caliper_res_4["pairs"]) <= self.num_disk)
 
         ##########################
         # Summary result
@@ -1297,8 +1297,8 @@ if __name__ == '__main__':
     from tqdm import tqdm
     import os
 
-    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_20_04\images"
-    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_20_04\out_rect"
+    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_5_5\images"
+    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_5_5\out_rect"
     save_path_bottom_rect = f"{OUTPUT_PATH}/bottom"
     save_path_top_rect = f"{OUTPUT_PATH}/top"
     os.makedirs(save_path_bottom_rect, exist_ok=True)
@@ -1343,6 +1343,7 @@ if __name__ == '__main__':
         # endregion
 
         # region GET THE CROPS FOR SEGMENTATION
+
         crop_seg_1, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_middle[0], direction='bottom')
         crop_seg_2, _ = disk_checking_service.crop_box_for_segmentation(crop_img, boxes_middle[0])
         # crop boxes
@@ -1373,7 +1374,7 @@ if __name__ == '__main__':
 
         for i, crop in enumerate(crops_1 + crops_2):
             img_name = os.path.basename(path).replace('.bmp', f'_crop_{i}.bmp')
-            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_segment\new_data_20_04/images/{img_name}",
+            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_segment\new_data_5_5\images/{img_name}",
                         crop)
 
         # img_name_1 = os.path.basename(path).replace('.bmp', f'_seg_1.bmp')
