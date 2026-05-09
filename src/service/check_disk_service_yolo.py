@@ -691,7 +691,6 @@ class DiskCheckingService(BaseService):
         # Crop the boxes by lines
         line_middle_crops_top = self.crop_boxes(crop_img, line_rects_top, "top")
         line_middle_crops_bottom = self.crop_boxes(crop_img, line_rects_bottom, "bottom")
-        print(f"Detect + Crop time: {(time.time() - time_st) * 1000:.2f} ms")
 
         # Classify the crops
         time_st = time.time()
@@ -700,17 +699,29 @@ class DiskCheckingService(BaseService):
             line_middle_crops_bottom)
 
         ng_boxes2 = [(box, conf) for label, box, conf in zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
-                     label == 'ng']
+                     label == ClassifyResult.NG]
         ng_boxes3 = [(box, conf) for label, box, conf in
                      zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
-                     if label == 'ng']
+                     if label == ClassifyResult.NG]
+
+        no_disk_boxes2 = [(box, conf) for label, box, conf in
+                          zip(cls_res_middle_top, line_rects_top, cls_conf_middle_top) if
+                          label == ClassifyResult.NO_DISK]
+        no_disk_boxes3 = [(box, conf) for label, box, conf in
+                          zip(cls_res_middle_bottom, line_rects_bottom, cls_conf_middle_bottom)
+                          if label == ClassifyResult.NO_DISK]
+
 
         # Merge near boxes
         ng_boxes2 = self.merge_boxes_1d_x(ng_boxes2)
         ng_boxes3 = self.merge_boxes_1d_x(ng_boxes3)
 
-        ng_boxes =  ng_boxes2 + ng_boxes3
-        print(f"Classification time: {(time.time() - time_st) * 1000:.2f} ms")
+        no_disk_boxes2 = self.merge_boxes_1d_x(no_disk_boxes2)
+        no_disk_boxes3 = self.merge_boxes_1d_x(no_disk_boxes3)
+
+        # Get the final boxes
+        ng_boxes = ng_boxes2 + ng_boxes3
+        no_disk_boxes = no_disk_boxes2 + no_disk_boxes3
 
         # Crop the segmentation area
         time_st = time.time()
@@ -758,6 +769,7 @@ class DiskCheckingService(BaseService):
 
         # Visualize result:
         self.draw_boxes(crop_img, ng_boxes, (0, 0, 255), ClassifyResult.NG)
+        self.draw_boxes(crop_img, no_disk_boxes, (0, 102, 255), "Empty")
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_1)
         self.draw_mask_contour(crop_seg_1, mask_seg_1, center_2)
         self.draw_mask_contour(crop_seg_2, mask_seg_2, center_3)
@@ -778,12 +790,24 @@ class DiskCheckingService(BaseService):
         res_final = self._convert_2_base64(crop_img)
 
         # Summary result
-        res_classification = len(ng_boxes) == 0
+        res_classification = InspectionState.NG
+        if len(ng_boxes) == 0 and len(no_disk_boxes) == 0:
+            res_classification = InspectionState.OK
+        elif len(ng_boxes) > 0:
+            res_classification = InspectionState.NG
+        elif len(no_disk_boxes) > 0:
+            res_classification = InspectionState.WARNING
         res_spacing = False not in res_spacing_1 + res_spacing_2 + res_spacing_3 + res_spacing_4
-        res_count = (len(caliper_res_1["pairs"]) == self.num_disk and len(caliper_res_2["pairs"]) == self.num_disk
-                     and len(caliper_res_3["pairs"]) == self.num_disk and len(caliper_res_4["pairs"]) == self.num_disk)
+        res_count = (len(caliper_res_1["pairs"]) <= self.num_disk and len(caliper_res_2["pairs"]) <= self.num_disk
+                     and len(caliper_res_3["pairs"]) <= self.num_disk and len(caliper_res_4["pairs"]) <= self.num_disk)
 
-        sum_res = res_classification and res_spacing and res_count
+        if res_classification == InspectionState.OK and res_spacing and res_count:
+            sum_res = InspectionState.OK
+        else:
+            if res_classification == InspectionState.WARNING and res_spacing and res_count:
+                sum_res = InspectionState.WARNING
+            else:
+                sum_res = InspectionState.NG
 
         return DataDebugResponse(Result=sum_res,
                                  DetectImg=res_detect,

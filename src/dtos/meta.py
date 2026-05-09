@@ -24,7 +24,7 @@ class DataResponseUv(BaseModel):
 
 
 class DataDebugResponse(BaseModel):
-    Result: bool = False  # True/False
+    Result: int = 0  # 0/1/2 - ok/ng/warning
     DetectImg: str = None  # base64 result encoded image
     SegmentImg: str = None  # base64 result encoded image
     FinalImg: str = None  # base64 result encoded image
