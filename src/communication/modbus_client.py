@@ -66,6 +66,12 @@ class MbClient:
     def off_led(self):
         return self.__write_bit(21, False)
 
+    def on_ok_signal(self):
+        return self.__write_bit(30, True)
+
+    def off_ok_signal(self):
+        return self.__write_bit(30, False)
+
     def on_error_abnormal(self):
         return self.__write_bit(32, True)
 

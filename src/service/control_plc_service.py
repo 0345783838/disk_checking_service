@@ -43,3 +43,9 @@ class PlcControllingService(BaseService):
 
     def on_error_mixing(self):
         return self.plc_controller.on_error_mixing()
+
+    def on_ok_signal(self):
+        return self.plc_controller.on_ok_signal()
+
+    def off_ok_signal(self):
+        return self.plc_controller.off_ok_signal()

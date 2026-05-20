@@ -236,3 +236,14 @@ def on_error_abnormal():
 @communication_router.get(path='/on_error_mixing')
 def on_error_abnormal():
     return {"Success": plc_controlling_service.on_error_mixing()}
+
+
+@communication_router.get(path='/on_ok_signal')
+def on_ok_signal():
+    return {"Success": plc_controlling_service.on_ok_signal()}
+
+
+@communication_router.get(path='/off_ok_signal')
+def off_ok_signal():
+    return {"Success": plc_controlling_service.off_ok_signal()}
+
