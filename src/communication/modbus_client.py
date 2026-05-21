@@ -6,8 +6,8 @@ import time
 class MbClient:
     # ip="192.168.0.211", port=8000,
     def __init__(self, id=1):
-        self.HMI_IP = None
-        self.PORT = None
+        self.HMI_IP = "192.168.2.10"
+        self.PORT = 8000
         self.UNIT_ID = id
         self.client = None
 
@@ -95,7 +95,7 @@ class MbClient:
             # if not self.check_connection():
             #     return False
 
-            rr = self.client.write_coil(addr, value, unit=self.UNIT_ID)
+            rr = self.client.write_coil(addr, value)
             if rr.isError():
                 return False
 
@@ -109,15 +109,21 @@ class MbClient:
             # if not self.check_connection():
             #     return -1
 
-            rr = self.client.read_coils(addr, 1, unit=self.UNIT_ID)
+            rr = self.client.read_coils(addr, count=1)
+            print(rr.bits[0])
+
             if rr.isError():
                 return -1, False
-
             return 1, rr.bits[0]
 
         except Exception:
+            print(traceback.format_exc())
             return -1, False
 
 
 if __name__ == "__main__":
-    pass
+    a = MbClient(1)
+    a.connect("192.168.2.10",8000)
+    while True:
+        time.sleep(1)
+        a.read_trigger()

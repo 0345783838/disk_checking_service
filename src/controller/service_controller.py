@@ -202,12 +202,12 @@ def disconnect_plc():
     return {"Success": plc_controlling_service.disconnect_plc()}
 
 
-@communication_router.get(path='/control_uv')
+@communication_router.get(path='/control_uv_light')
 def control_uv(status: bool = Query(...)):
     return {"Success": plc_controlling_service.turn_on_uv() if status else plc_controlling_service.turn_off_uv()}
 
 
-@communication_router.get(path='/control_led')
+@communication_router.get(path='/control_white_light')
 def control_led_1(status: bool = Query(...)):
     return {"Success": plc_controlling_service.turn_on_led() if status else plc_controlling_service.turn_off_led()}
 
