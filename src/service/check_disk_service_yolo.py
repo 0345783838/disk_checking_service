@@ -958,8 +958,12 @@ class DiskCheckingService(BaseService):
                 error_code = ErrorCode.ABNORMAL[0]
                 error_desc = ErrorCode.ABNORMAL[1]
 
-        min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
-        max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+        try:
+            min_disk_distance = min(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+            max_disk_distance = max(dis_list_1 + dis_list_2 + dis_list_3 + dis_list_4)
+        except:
+            min_disk_distance = 0
+            max_disk_distance = 0
 
         return DataResponse(Result=sum_res,
                             ErrorCode=error_code,
@@ -1321,8 +1325,8 @@ if __name__ == '__main__':
     from tqdm import tqdm
     import os
 
-    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_5_5\images"
-    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\working_5_5\out_rect"
+    IMAGE_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\raw_data\real_images\empty_disk"
+    OUTPUT_PATH = r"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_cls\new_data_22_05_classify"
     save_path_bottom_rect = f"{OUTPUT_PATH}/bottom"
     save_path_top_rect = f"{OUTPUT_PATH}/top"
     os.makedirs(save_path_bottom_rect, exist_ok=True)
@@ -1348,21 +1352,21 @@ if __name__ == '__main__':
 
         # region GET THE CLASSIFICATION BOXES
 
-        # # Get the point boxes by lines
-        # line_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
-        # line_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
-        #
-        # # Crop the boxes by lines
-        # line_middle_crops_top = disk_checking_service.crop_boxes(crop_img, line_rects_top, "top")
-        # line_middle_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_rects_bottom, "bottom")
-        #
-        # for i, crop_rect in enumerate(line_middle_crops_top):
-        #     img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
-        #     cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
-        #
-        # for j, crop_rect in enumerate(line_middle_crops_bottom):
-        #     img_name = os.path.basename(path).replace('.bmp', f'_{i + j + 1}.bmp')
-        #     cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
+        # Get the point boxes by lines
+        line_rects_top = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "top")
+        line_rects_bottom = disk_checking_service.get_line_boxes_ratio_shift(crop_img, boxes_middle, "bottom")
+
+        # Crop the boxes by lines
+        line_middle_crops_top = disk_checking_service.crop_boxes(crop_img, line_rects_top, "top")
+        line_middle_crops_bottom = disk_checking_service.crop_boxes(crop_img, line_rects_bottom, "bottom")
+
+        for i, crop_rect in enumerate(line_middle_crops_top):
+            img_name = os.path.basename(path).replace('.bmp', f'_{i}.bmp')
+            cv2.imwrite(fr"{save_path_bottom_rect}/{img_name}", crop_rect)
+
+        for j, crop_rect in enumerate(line_middle_crops_bottom):
+            img_name = os.path.basename(path).replace('.bmp', f'_{i + j + 1}.bmp')
+            cv2.imwrite(fr"{save_path_top_rect}/{img_name}", crop_rect)
 
         # endregion
 
@@ -1398,7 +1402,7 @@ if __name__ == '__main__':
 
         for i, crop in enumerate(crops_1 + crops_2):
             img_name = os.path.basename(path).replace('.bmp', f'_crop_{i}.bmp')
-            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_segment\new_data_5_5\images/{img_name}",
+            cv2.imwrite(fr"D:\huynhvc\OTHERS\disk_checking\disk_checking\datasets\dataset_segment\new_data_22_05\images/{img_name}",
                         crop)
 
         # img_name_1 = os.path.basename(path).replace('.bmp', f'_seg_1.bmp')
