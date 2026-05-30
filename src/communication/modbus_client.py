@@ -43,13 +43,13 @@ class MbClient:
             return False
 
         try:
-            rr = self.client.read_coils(0, 1, unit=self.UNIT_ID)
+            rr = self.client.read_coils(30, count=1)
             if rr is None or rr.isError():
                 return False
 
             return True
 
-        except Exception:
+        except Exception as ex:
             return False
 
     # ====================================================
